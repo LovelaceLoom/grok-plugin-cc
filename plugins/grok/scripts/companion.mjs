@@ -29,7 +29,9 @@ import {
   cleanGrokEnv, probeWithFallback, checkMinVersion, MIN_GROK_VERSION,
   MODEL_FALLBACK_CHAIN, capabilityProbe,
   parseGrokJson, writePromptToTempFile, EFFORT_LEVELS, compareVersions, commandUsesJsonOutput,
-  effortFlagForModel, grokHomeDir
+  effortFlagForModel, grokHomeDir,
+  webFetchEnvOverride, validatePersonas, validateAgentsJson, buildFanOutPrompt,
+  DEFAULT_FANOUT_PERSONAS, MAX_FANOUT_AGENTS
 } from "./lib/grok.mjs";
 import { buildReviewPrompt } from "./lib/prompts.mjs";
 import { renderJobTable, renderJobDetails, fmtTime, TerminalSanitizer, sanitizeForTerminal, formatSessionHint } from "./lib/render.mjs";
@@ -386,10 +388,10 @@ function diagnoseEmptySpawnFailure({ args, status, label }) {
 // (research streams in the wild are 100-500 KiB) while keeping the cap
 // well below process RSS.
 const HEADLESS_GROK_MAX_BUFFER = 32 * 1024 * 1024;
-function runHeadlessGrok({ args, timeoutMs, label, timeoutHint = "" }) {
+function runHeadlessGrok({ args, timeoutMs, label, timeoutHint = "", extraEnv = null }) {
   const spawnOpts = {
     encoding: "utf8",
-    env: cleanGrokEnv(),
+    env: cleanGrokEnv(process.env, extraEnv),
     maxBuffer: HEADLESS_GROK_MAX_BUFFER
   };
   if (timeoutMs > 0) spawnOpts.timeout = Math.min(timeoutMs, MAX_SETTIMEOUT_MS);
@@ -522,8 +524,13 @@ function cmdAsk({ flags, positional }) {
   // when the user supplied one, so we only add the default in the
   // absence of a user value.
   if (flags["max-turns"] == null) args.push("--max-turns", String(DEFAULT_ASK_MAX_TURNS));
+  // v1.2.0: turn Grok's web_fetch grounding tool ON by default (off in the
+  // CLI unless GROK_WEB_FETCH=1) so a pasted URL can be fetched. Suppressed
+  // by --no-web-fetch, by --no-web-search (offline intent), or by a user-set
+  // GROK_WEB_FETCH env value.
+  const extraEnv = webFetchEnvOverride({ noWebFetch: !!flags["no-web-fetch"] || disableWebSearch });
   runHeadlessGrok({
-    args, timeoutMs, label: "ask",
+    args, timeoutMs, label: "ask", extraEnv,
     timeoutHint: "Re-run with --timeout 0 to disable, or pick a longer duration like --timeout 15m."
   });
 }
@@ -1575,6 +1582,12 @@ function cmdResearch({ flags, positional }) {
                  : flags.check === false ? false
                  : true;
   const disableWebSearch = !!flags["no-web-search"];
+  // v1.2.0: research defaults to the `segments` compaction mode — it persists
+  // per-segment markdown so a long, multi-turn research run keeps more of its
+  // own context grep-able instead of collapsing to a lossy summary. Override
+  // with --compaction-mode / --compaction-detail.
+  const compactionMode = flags["compaction-mode"] || "segments";
+  const compactionDetail = flags["compaction-detail"];
   let baseArgs;
   try {
     baseArgs = grokBaseArgs({
@@ -1584,6 +1597,8 @@ function cmdResearch({ flags, positional }) {
       effort,
       check: checkFlag,
       disableWebSearch,
+      compactionMode,
+      compactionDetail,
       ...extractPolicyFlags(flags)
     });
   } catch (e) {
@@ -1592,9 +1607,95 @@ function cmdResearch({ flags, positional }) {
   }
   const args = ["-p", prompt, ...baseArgs];
   if (flags["max-turns"] == null) args.push("--max-turns", String(DEFAULT_RESEARCH_MAX_TURNS));
+  // v1.2.0: web_fetch grounding ON by default (suppressed by --no-web-fetch,
+  // --no-web-search, or a user-set GROK_WEB_FETCH).
+  const extraEnv = webFetchEnvOverride({ noWebFetch: !!flags["no-web-fetch"] || disableWebSearch });
   runHeadlessGrok({
-    args, timeoutMs, label: "research",
+    args, timeoutMs, label: "research", extraEnv,
     timeoutHint: "Re-run with --timeout 0 to disable, or pick a longer duration like --timeout 1h."
+  });
+}
+
+// ---------- v1.2.0: /grok:fan-out ----------
+//
+// One Grok call that dispatches several subagents in parallel, each analyzing
+// the task from a different angle, then synthesizes a single consolidated
+// answer. This is the "use Grok in many directions in one shot" primitive.
+//
+// Two modes:
+//   default        — built-in personas (researcher / reviewer / security-
+//                    auditor / test-writer) applied via Grok's `task` tool.
+//   --agents-json  — custom inline subagent definitions (validated, passed
+//                    through to `grok --agents`).
+//
+// Read-only by default (plan mode + write/shell tool denylist) so the subagents
+// analyze rather than edit; subagent spawning itself stays enabled. --write
+// (gated by GROK_PLUGIN_ALLOW_WRITE=1) opens it up for change-making fan-outs.
+const DEFAULT_FANOUT_TIMEOUT_MS = 30 * 60 * 1000; // 30 min — several child sessions
+const DEFAULT_FANOUT_MAX_TURNS = 200;
+function cmdFanOut({ flags, positional }) {
+  const task = positional.join(" ").trim();
+  if (!task) {
+    console.error("Usage: fan-out <task>   [--personas a,b,c | --agents-json '<json>'] [--write] [--no-web-fetch]");
+    process.exit(2);
+  }
+  if (!which("grok")) {
+    console.error("Grok CLI not installed. Run `/grok:setup`.");
+    process.exit(127);
+  }
+  if (flags["no-subagents"]) {
+    console.error("fan-out needs subagents — drop --no-subagents (a fan-out with no subagents is just a plain ask).");
+    process.exit(2);
+  }
+  const timeoutMs = resolveTimeoutMs(flags.timeout, DEFAULT_FANOUT_TIMEOUT_MS);
+
+  const writeMode = !!flags.write;
+  if (writeMode && process.env.GROK_PLUGIN_ALLOW_WRITE !== "1") {
+    console.error("[grok-plugin] fan-out --write requires GROK_PLUGIN_ALLOW_WRITE=1 in the environment (safety gate). Refusing.");
+    process.exit(2);
+  }
+
+  // Decide the subagents: explicit custom --agents-json, else built-in personas.
+  let agents = null;       // canonical json string for --agents (custom mode)
+  let agentNames = null;   // names for the orchestration prompt (custom mode)
+  let personas = null;     // persona names (default mode)
+  try {
+    if (flags["agents-json"] != null && flags["agents-json"] !== "") {
+      const v = validateAgentsJson(flags["agents-json"]);
+      agents = v.json;
+      agentNames = v.names;
+    } else {
+      personas = validatePersonas(flags.personas);
+    }
+  } catch (e) {
+    console.error(String(e.message || e));
+    process.exit(2);
+  }
+
+  const fanPrompt = buildFanOutPrompt(task, agentNames ? { agentNames } : { personas });
+  const effort = validateEffort(flags.effort);
+  const checkFlag = !!flags.check;
+  let baseArgs;
+  try {
+    baseArgs = grokBaseArgs({
+      readOnly: !writeMode,   // read-only analysis by default; Agent/task tool stays enabled
+      model: flags.model,
+      jsonOutput: true,
+      effort,
+      check: checkFlag,
+      agents,                 // null in persona mode; canonical json in custom mode
+      ...extractPolicyFlags(flags)
+    });
+  } catch (e) {
+    console.error(String(e.message || e));
+    process.exit(2);
+  }
+  const args = ["-p", fanPrompt, ...baseArgs];
+  if (flags["max-turns"] == null) args.push("--max-turns", String(DEFAULT_FANOUT_MAX_TURNS));
+  const extraEnv = webFetchEnvOverride({ noWebFetch: !!flags["no-web-fetch"] });
+  runHeadlessGrok({
+    args, timeoutMs, label: "fan-out", extraEnv,
+    timeoutHint: "Fan-out runs several subagents; re-run with --timeout 0 to disable or a longer --timeout like 1h."
   });
 }
 
@@ -2611,7 +2712,7 @@ function cmdInspect({ flags }) {
 async function main() {
   const [, , sub, ...rest] = process.argv;
   if (!sub) {
-    console.error("Usage: companion.mjs <setup|ask|review|adversarial-review|imagine|imagine-video|task|research|models|best-of|aggregate-review|inspect|worktree|sessions|memory|mcp|status|result|cancel|purge> [args...]");
+    console.error("Usage: companion.mjs <setup|ask|review|adversarial-review|imagine|imagine-video|task|research|fan-out|models|best-of|aggregate-review|inspect|worktree|sessions|memory|mcp|status|result|cancel|purge> [args...]");
     process.exit(2);
   }
   let args;
@@ -2650,6 +2751,7 @@ async function main() {
     case "imagine-video": return await cmdImagine(args, { video: true });
     case "task": return await cmdTask(args);
     case "research": return cmdResearch(args);
+    case "fan-out": return cmdFanOut(args);
     case "models": return cmdModels(args);
     case "best-of": return cmdBestOf(args);
     case "aggregate-review": return await cmdAggregateReview(args);
@@ -2664,7 +2766,7 @@ async function main() {
     case "purge": return cmdPurge(args);
     default:
       console.error(`Unknown subcommand: ${sub}`);
-      console.error("Usage: companion.mjs <setup|ask|review|adversarial-review|imagine|imagine-video|task|research|models|best-of|aggregate-review|inspect|worktree|sessions|memory|mcp|status|result|cancel|purge> [args...]");
+      console.error("Usage: companion.mjs <setup|ask|review|adversarial-review|imagine|imagine-video|task|research|fan-out|models|best-of|aggregate-review|inspect|worktree|sessions|memory|mcp|status|result|cancel|purge> [args...]");
       process.exit(2);
   }
 }

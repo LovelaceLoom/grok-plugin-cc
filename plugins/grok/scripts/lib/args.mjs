@@ -187,6 +187,9 @@ export const COMMON_BOOL_FLAGS = new Set([
   "check",                // --check: self-verification loop (headless)
   "no-check",             // --no-check: explicit opt-out (matters for commands where --check defaults to on, e.g. /grok:research)
   "no-web-search",        // --no-web-search: turn OFF default web search
+  // v1.2.0 grounding + fan-out + streaming
+  "no-web-fetch",         // --no-web-fetch: opt out of the default-on web_fetch grounding tool (research/ask/fan-out)
+  "stream",               // --stream: live streaming output (research; uses --output-format streaming-json)
   "set-default",          // /grok:models --set-default: persist activeModel
   "adversarial",          // /grok:aggregate-review --adversarial: switch all reviewers to adversarial template
   // v0.8.0 Grok CLI bool kill-switches
@@ -214,6 +217,11 @@ export const COMMON_VALUE_FLAGS = new Set([
   "permission-mode",      // --permission-mode <mode>: user-selectable (plan|auto|acceptEdits|dontAsk|bypassPermissions|default)
   "agent",                // --agent <name>: pick a bundled Grok agent persona
   "sandbox",              // --sandbox <profile>: GROK_SANDBOX equivalent
+  // v1.2.0 fan-out + context compaction
+  "personas",             // /grok:fan-out --personas a,b,c: pick built-in personas
+  "agents-json",          // /grok:fan-out --agents-json '<json>': custom inline subagent defs
+  "compaction-mode",      // --compaction-mode summary|transcript|segments
+  "compaction-detail",    // --compaction-detail none|minimal|balanced|verbose
   // v1.0.2 (issue #5): --save-to on /grok:imagine + /grok:imagine-video.
   // The plugin copies the generated media from grok's internal session
   // dir (~/.grok/sessions/<URL-encoded-cwd>/<session>/{images,videos}/N.X)

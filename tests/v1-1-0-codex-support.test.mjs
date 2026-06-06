@@ -115,7 +115,7 @@ test("v1.1.0: user-facing skills all reference CLAUDE_PLUGIN_ROOT/scripts/compan
   // Codex sets CLAUDE_PLUGIN_ROOT for CC-compat, so the same env var works
   // in both hosts. If a future PR switches to a host-specific var, it must
   // also update this test.
-  const skills = ["grok-ask", "grok-research", "grok-imagine", "grok-rescue"];
+  const skills = ["grok-ask", "grok-research", "grok-imagine", "grok-rescue", "grok-fan-out"];
   for (const name of skills) {
     const skillFile = path.join(SKILLS_DIR, name, "SKILL.md");
     const src = fs.readFileSync(skillFile, "utf8");
@@ -135,9 +135,10 @@ test("v1.1.0: internal skills remain user-invocable: false (no regression)", () 
   }
 });
 
-test("v1.1.0: skills/ directory contains exactly the expected 7 skills", () => {
-  // 4 new user-facing + 3 existing internal. If this fails, someone added
-  // a skill without updating the test — review intent.
+test("skills/ directory contains exactly the expected 8 skills", () => {
+  // 5 user-facing (grok-ask/research/imagine/rescue + v1.2.0 grok-fan-out) +
+  // 3 internal. If this fails, someone added a skill without updating the
+  // test — review intent.
   const entries = fs.readdirSync(SKILLS_DIR).filter((e) => {
     const full = path.join(SKILLS_DIR, e);
     return fs.statSync(full).isDirectory();
@@ -145,6 +146,7 @@ test("v1.1.0: skills/ directory contains exactly the expected 7 skills", () => {
   assert.deepEqual(entries, [
     "grok-ask",
     "grok-cli-runtime",
+    "grok-fan-out",
     "grok-imagine",
     "grok-prompting",
     "grok-rescue",

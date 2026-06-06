@@ -118,6 +118,20 @@ export function cleanGrokEnv(parent = process.env, overrides = null) {
   return out;
 }
 
+// v1.2.0: decide the GROK_WEB_FETCH override for grounding-friendly commands
+// (research / ask / fan-out). Grok's web_fetch tool is OFF unless
+// GROK_WEB_FETCH=1, so the URL the user pasted can't be fetched by default —
+// one of Grok's grounding differentiators is dormant. We turn it ON by default
+// but: (1) honor an explicit --no-web-fetch opt-out, and (2) never clobber a
+// value the user already set in their environment. Returns an overrides object
+// suitable for cleanGrokEnv's second argument (empty = leave env as-is).
+export function webFetchEnvOverride({ noWebFetch = false, parentEnv = process.env } = {}) {
+  if (noWebFetch) return { GROK_WEB_FETCH: "0" };
+  const existing = parentEnv ? parentEnv.GROK_WEB_FETCH : undefined;
+  if (typeof existing === "string" && existing !== "") return {};
+  return { GROK_WEB_FETCH: "1" };
+}
+
 // Only one public model is currently exposed via `grok models` for the default
 // hosted endpoint. Pinning the plugin to this id keeps results consistent even
 // if Grok flips the default later. Override per-call with --model, or globally
@@ -475,6 +489,12 @@ export const AUTH_PROBE_DISALLOWED_TOOLS = `Agent,run_terminal_cmd,search_replac
 // caller can pass user input straight through without ad-hoc parsing.
 export const EFFORT_LEVELS = new Set(["low", "medium", "high", "xhigh", "max"]);
 
+// v1.2.0: context-compaction controls (`grok --help`). `segments` persists
+// per-segment markdown that can be grep'd back later — the most context-
+// preserving mode, useful for long /grok:research runs.
+export const COMPACTION_MODES = new Set(["summary", "transcript", "segments"]);
+export const COMPACTION_DETAILS = new Set(["none", "minimal", "balanced", "verbose"]);
+
 // Upper bound on --best-of-n. Grok lets you pick any positive int, but each
 // branch is a full token-spend, so we cap it at 8 to keep accidental
 // 50-branch runs from melting quota. Callers can override with a higher
@@ -573,6 +593,158 @@ function validateRuleArray(name, arr) {
   return arr;
 }
 
+// ---------- v1.2.0: fan-out (multi-angle, single-call analysis) ----------
+//
+// Grok's `task` tool ships built-in personas (CLI Subagents docs:
+// researcher / reviewer / security-auditor / test-writer / implementer /
+// design-doc-writer / design-doc-reviewer). The DEFAULT fan-out asks Grok to
+// dispatch several of these in parallel and synthesize — no custom schema, so
+// it can't drift if xAI changes the inline `--agents` JSON shape. The advanced
+// `--agents` passthrough below is for power users who want custom inline
+// subagent definitions; we enforce a safety envelope and let Grok validate the
+// field schema itself.
+export const FANOUT_PERSONAS = new Set([
+  "researcher", "reviewer", "security-auditor", "test-writer",
+  "implementer", "design-doc-writer", "design-doc-reviewer"
+]);
+// Read-only analysis quartet used when the caller doesn't pick personas.
+export const DEFAULT_FANOUT_PERSONAS = ["researcher", "reviewer", "security-auditor", "test-writer"];
+
+// Hard cap on subagents per fan-out. Each is a full child session (token
+// spend), so this bounds accidental blow-ups. The slash-command default is
+// the quartet above; the autonomous skill is told to stay at/under it.
+export const MAX_FANOUT_AGENTS = 8;
+// Per-string-field and total-payload caps for a custom --agents JSON blob.
+// The blob rides on argv, so the total cap is an ARG_MAX defense.
+export const MAX_AGENT_FIELD_LEN = 8 * 1024;
+export const MAX_AGENTS_JSON_BYTES = 64 * 1024;
+
+export function validatePersonas(input) {
+  if (input == null || input === "") return [...DEFAULT_FANOUT_PERSONAS];
+  const list = Array.isArray(input)
+    ? input
+    : String(input).split(",").map(s => s.trim()).filter(Boolean);
+  // Cap the requested count first so an obviously-too-large ask fails clearly
+  // even if some entries are also invalid.
+  if (list.length > MAX_FANOUT_AGENTS) {
+    throw new Error(`too many personas (${list.length} > MAX ${MAX_FANOUT_AGENTS})`);
+  }
+  const seen = new Set();
+  const out = [];
+  for (const p of list) {
+    if (typeof p !== "string") throw new Error("--personas entries must be strings");
+    if (!FANOUT_PERSONAS.has(p)) {
+      throw new Error(`unknown persona: ${p}. Allowed: ${[...FANOUT_PERSONAS].join(", ")}`);
+    }
+    if (!seen.has(p)) { seen.add(p); out.push(p); }
+  }
+  return out.length ? out : [...DEFAULT_FANOUT_PERSONAS];
+}
+
+// Recursively validate every string in a custom subagent object: size-capped,
+// and free of non-newline control bytes (prompt bodies legitimately contain
+// newlines/tabs, so we use the MULTILINE variant). Names get a stricter check
+// at the top level before this runs.
+function scrubAgentStrings(value, where) {
+  if (typeof value === "string") {
+    if (value.length > MAX_AGENT_FIELD_LEN) {
+      throw new Error(`--agents field ${where} too large (>${MAX_AGENT_FIELD_LEN} chars)`);
+    }
+    if (CONTROL_BYTE_MULTILINE.test(value)) {
+      throw new Error(`--agents field ${where} contains forbidden control bytes`);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((v, i) => scrubAgentStrings(v, `${where}[${i}]`));
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const k of Object.keys(value)) scrubAgentStrings(value[k], `${where}.${k}`);
+  }
+}
+
+// Validate a custom `--agents` payload (JSON string or already-parsed array).
+// Returns { json, names }. We deliberately do NOT hard-code Grok's field
+// schema (only `name` is required, as identity) — Grok validates the rest, so
+// the plugin stays correct even if xAI evolves the inline definition shape.
+export function validateAgentsJson(input, { maxAgents = MAX_FANOUT_AGENTS } = {}) {
+  let arr;
+  if (typeof input === "string") {
+    try { arr = JSON.parse(input); }
+    catch (e) { throw new Error(`invalid --agents JSON: ${e.message}`); }
+  } else {
+    arr = input;
+  }
+  if (!Array.isArray(arr)) {
+    throw new Error("--agents must be a JSON array of subagent objects");
+  }
+  if (arr.length === 0) {
+    throw new Error("--agents must contain at least one subagent object");
+  }
+  if (arr.length > maxAgents) {
+    throw new Error(`--agents has too many entries (${arr.length} > MAX ${maxAgents})`);
+  }
+  const names = [];
+  for (let i = 0; i < arr.length; i++) {
+    const a = arr[i];
+    if (!a || typeof a !== "object" || Array.isArray(a)) {
+      throw new Error(`--agents[${i}] must be an object`);
+    }
+    const nm = a.name;
+    if (typeof nm !== "string" || nm.length === 0) {
+      throw new Error(`--agents[${i}] is missing a non-empty "name"`);
+    }
+    if (nm.length > 128) {
+      throw new Error(`--agents[${i}].name too long (>128 chars)`);
+    }
+    // name is a single-line identity token: no control bytes (incl. tab/LF),
+    // no path separators (defuse `../` style names).
+    if (CONTROL_BYTE_STRICT.test(nm) || nm.includes("/")) {
+      throw new Error(`--agents[${i}].name invalid: control bytes or path separators`);
+    }
+    scrubAgentStrings(a, `[${i}]`);
+    names.push(nm);
+  }
+  const json = JSON.stringify(arr);
+  if (Buffer.byteLength(json, "utf8") > MAX_AGENTS_JSON_BYTES) {
+    throw new Error(`--agents payload too large (>${MAX_AGENTS_JSON_BYTES} bytes); reduce agent count or prompt sizes`);
+  }
+  return { json, names };
+}
+
+// Build the orchestration prompt that drives a fan-out. In persona mode the
+// listed names are Grok built-in personas applied via the `task` tool's
+// `persona` parameter; in custom mode they are the names of the inline
+// `--agents` subagents. Either way Grok is told to dispatch all of them in
+// parallel and then synthesize a single consolidated report itself.
+export function buildFanOutPrompt(task, { personas = null, agentNames = null } = {}) {
+  const t = String(task == null ? "" : task).trim();
+  const custom = Array.isArray(agentNames) && agentNames.length > 0;
+  const names = custom ? agentNames : (personas || []);
+  const bullets = names.map(n => `  - ${n}`).join("\n");
+  const dispatchLine = custom
+    ? "Use your `task` tool to spawn EACH of your configured custom subagents below, running them in parallel:"
+    : "Use your `task` tool to spawn one subagent per item below — set the `persona` parameter to each name — and run them in parallel:";
+  return [
+    "You are orchestrating a parallel, multi-angle analysis. Do not answer the task directly yet.",
+    "",
+    dispatchLine,
+    bullets,
+    "",
+    "Rules:",
+    "  - Dispatch ALL of the above subagents concurrently (issue the task calls together; do not finish one before starting the next).",
+    "  - Each subagent analyzes the TASK strictly from its own specialty angle, independently.",
+    "  - After EVERY subagent has returned, synthesize their findings yourself into a single consolidated report:",
+    "      1. One short section per angle with that subagent's key findings.",
+    "      2. A \"Consolidated verdict\" section reconciling agreements and conflicts, with the overall answer.",
+    "  - Proceed autonomously; do not ask clarifying questions. State any assumptions you make.",
+    "",
+    "TASK:",
+    t
+  ].join("\n");
+}
+
 export function grokBaseArgs({
   readOnly = true,
   model,
@@ -597,6 +769,9 @@ export function grokBaseArgs({
   permissionMode,         // string | undefined — user-selectable; overrides readOnly's default
   sandbox,                // string | undefined — --sandbox <profile>
   agent,                  // string | undefined — --agent <name>
+  agents,                 // Array | JSON string | undefined — --agents <json> (v1.2.0 inline subagents)
+  compactionMode,         // string | undefined — --compaction-mode summary|transcript|segments
+  compactionDetail,       // string | undefined — --compaction-detail none|minimal|balanced|verbose
   // v0.9.0 — session / worktree / memory passthroughs
   worktree,               // string|true|undefined — --worktree [<name>]: bool form (true) or named
   continueSession = false,// --continue: continue most-recent session for cwd
@@ -738,6 +913,26 @@ export function grokBaseArgs({
       throw new Error(`--agent name invalid: ${s.slice(0, 32)}`);
     }
     args.push("--agent", s);
+  }
+  // v1.2.0: --agents <json> inline subagent definitions (fan-out). Validated
+  // (count cap, name sanity, control-byte scrub, ARG_MAX size cap) and
+  // re-serialized to canonical JSON before it goes on argv.
+  if (agents != null && agents !== "") {
+    const { json } = validateAgentsJson(agents);
+    args.push("--agents", json);
+  }
+  // v1.2.0: context compaction controls.
+  if (compactionMode != null && compactionMode !== "") {
+    if (!COMPACTION_MODES.has(String(compactionMode))) {
+      throw new Error(`invalid --compaction-mode: ${compactionMode}. Allowed: ${[...COMPACTION_MODES].join(", ")}`);
+    }
+    args.push("--compaction-mode", String(compactionMode));
+  }
+  if (compactionDetail != null && compactionDetail !== "") {
+    if (!COMPACTION_DETAILS.has(String(compactionDetail))) {
+      throw new Error(`invalid --compaction-detail: ${compactionDetail}. Allowed: ${[...COMPACTION_DETAILS].join(", ")}`);
+    }
+    args.push("--compaction-detail", String(compactionDetail));
   }
 
   // v0.9.0 session / worktree / memory.
