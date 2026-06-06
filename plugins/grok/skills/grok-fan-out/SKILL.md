@@ -1,11 +1,11 @@
 ---
 name: grok-fan-out
-description: Run a multi-angle Grok analysis in a single call — Grok dispatches several subagents (security, review, research, tests) in parallel and synthesizes one consolidated answer. Use when the user wants a thorough, multi-perspective audit/review/analysis of something ("find everything wrong with…", "review this from all angles", "deep multi-angle look at…") that benefits from more coverage than a single-shot question. Read-only by default.
+description: Run a multi-angle Grok analysis in a single call — Grok analyzes the task from several expert angles (security, review, research, tests) and synthesizes one consolidated answer with a section per angle plus a verdict. Use when the user wants a thorough, multi-perspective audit/review/analysis of something ("find everything wrong with…", "review this from all angles", "deep multi-angle look at…") that benefits from more coverage than a single-shot question. Read-only by default.
 ---
 
-# Grok — Fan-Out (Parallel Multi-Angle Analysis)
+# Grok — Fan-Out (Multi-Angle Analysis)
 
-Use this skill when one angle isn't enough — when the user wants something looked at from **multiple specialties at once** (correctness, security, tests, architecture, research) and a single consolidated verdict. Grok runs the angles as parallel subagents in one call and synthesizes them itself, so you get broad coverage and real depth from a single delegation.
+Use this skill when one angle isn't enough — when the user wants something looked at from **multiple specialties at once** (correctness, security, tests, architecture, research) and a single consolidated verdict. Grok sweeps each angle in one call and synthesizes them, so you get broad coverage and real depth from a single delegation (deeper than a plain `grok-ask`).
 
 ## When to use
 
@@ -32,8 +32,8 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/companion.mjs" fan-out "<the user's task, pr
 ### Choosing the angles
 
 - Default angles (no flag): `researcher`, `reviewer`, `security-auditor`, `test-writer`.
-- `--personas a,b,c` — pick a subset of the built-ins (`researcher`, `reviewer`, `security-auditor`, `test-writer`, `implementer`, `design-doc-writer`, `design-doc-reviewer`). **Keep it to 3–4 personas** unless the user explicitly asks for more — each persona is a full child session (token spend). The plugin caps the total.
-- `--agents-json '<json array>'` — advanced: custom inline subagents (each object needs a `name`). Only use when the built-in personas don't fit the task.
+- `--personas a,b,c` — pick a subset of the built-in angle names (`researcher`, `reviewer`, `security-auditor`, `test-writer`, `implementer`, `design-doc-writer`, `design-doc-reviewer`). **Keep it to 3–4 angles** unless the user explicitly asks for more — each angle adds analysis depth (and tokens). The plugin caps the total.
+- `--agents-json '<json array>'` — advanced: name custom angles via a JSON array (each object needs a `name`). Only use when the built-in angle names don't fit the task.
 
 ### Other flags
 

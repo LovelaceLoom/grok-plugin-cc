@@ -142,18 +142,24 @@ test("grokBaseArgs throws on invalid agents (propagated from validateAgentsJson)
   assert.throws(() => grokBaseArgs({ agents: "[]" }), /empty|at least/i);
 });
 
-// ---------- buildFanOutPrompt ----------
+// ---------- buildFanOutPrompt (single-agent, multi-angle) ----------
+//
+// True parallel subagent dispatch in headless read-only mode is unreliable:
+// subagents' tool calls (e.g. run_terminal_command) get denied under read-only
+// permission modes, which cancels the whole turn -> empty output. So fan-out
+// uses ONE Grok agent that analyzes the task from each angle in turn and
+// synthesizes — always returns text, no permission-cancellation cascade.
 
-test("buildFanOutPrompt (persona mode) lists every persona and the task and demands synthesis", () => {
+test("buildFanOutPrompt (persona mode) lists every angle, the task, and demands a consolidated synthesis", () => {
   const p = buildFanOutPrompt("Audit auth.js for bugs", { personas: ["reviewer", "security-auditor"] });
   assert.match(p, /reviewer/);
   assert.match(p, /security-auditor/);
   assert.match(p, /Audit auth\.js for bugs/);
-  assert.match(p, /parallel/i);
-  assert.match(p, /synthesi/i);
+  assert.match(p, /angle/i);
+  assert.match(p, /synthesi|consolidat/i);
 });
 
-test("buildFanOutPrompt (custom-agents mode) references the custom agent names", () => {
+test("buildFanOutPrompt (custom-angles mode) references the custom angle names", () => {
   const p = buildFanOutPrompt("Review the diff", { agentNames: ["alpha", "beta"] });
   assert.match(p, /alpha/);
   assert.match(p, /beta/);

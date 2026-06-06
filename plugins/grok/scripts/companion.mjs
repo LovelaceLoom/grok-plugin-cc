@@ -1752,20 +1752,22 @@ function cmdResearch({ flags, positional }) {
 
 // ---------- v1.2.0: /grok:fan-out ----------
 //
-// One Grok call that dispatches several subagents in parallel, each analyzing
-// the task from a different angle, then synthesizes a single consolidated
-// answer. This is the "use Grok in many directions in one shot" primitive.
+// One Grok call that analyzes the task from several expert angles in turn and
+// synthesizes a single consolidated answer — "use Grok in many directions in
+// one shot", with more coverage/depth than a plain /grok:ask.
 //
-// Two modes:
-//   default        — built-in personas (researcher / reviewer / security-
-//                    auditor / test-writer) applied via Grok's `task` tool.
-//   --agents-json  — custom inline subagent definitions (validated, passed
-//                    through to `grok --agents`).
+// IMPORTANT design note: this does NOT spawn parallel `task`-tool subagents.
+// That was tried and is unreliable in headless read-only mode — a subagent's
+// denied tool call (e.g. run_terminal_command under dontAsk) cancels the whole
+// turn and yields empty output. A single agent sweeping the angles always
+// returns text and still delivers the multi-perspective depth. (True
+// plugin-orchestrated parallel fan-out is a possible future enhancement.)
 //
-// Read-only by default (plan mode + write/shell tool denylist) so the subagents
-// analyze rather than edit; subagent spawning itself stays enabled. --write
-// (gated by GROK_PLUGIN_ALLOW_WRITE=1) opens it up for change-making fan-outs.
-const DEFAULT_FANOUT_TIMEOUT_MS = 30 * 60 * 1000; // 30 min — several child sessions
+// Angle names come from --personas (built-in Grok persona names, which steer
+// framing) or --agents-json (custom angle names, validated). Read-only by
+// default (plan mode); --write (gated by GROK_PLUGIN_ALLOW_WRITE=1) lets the
+// run make changes.
+const DEFAULT_FANOUT_TIMEOUT_MS = 30 * 60 * 1000; // 30 min — multi-angle sweep is slow
 const DEFAULT_FANOUT_MAX_TURNS = 200;
 function cmdFanOut({ flags, positional }) {
   const task = positional.join(" ").trim();
@@ -1777,10 +1779,6 @@ function cmdFanOut({ flags, positional }) {
     console.error("Grok CLI not installed. Run `/grok:setup`.");
     process.exit(127);
   }
-  if (flags["no-subagents"]) {
-    console.error("fan-out needs subagents — drop --no-subagents (a fan-out with no subagents is just a plain ask).");
-    process.exit(2);
-  }
   const timeoutMs = resolveTimeoutMs(flags.timeout, DEFAULT_FANOUT_TIMEOUT_MS);
 
   const writeMode = !!flags.write;
@@ -1789,15 +1787,13 @@ function cmdFanOut({ flags, positional }) {
     process.exit(2);
   }
 
-  // Decide the subagents: explicit custom --agents-json, else built-in personas.
-  let agents = null;       // canonical json string for --agents (custom mode)
-  let agentNames = null;   // names for the orchestration prompt (custom mode)
-  let personas = null;     // persona names (default mode)
+  // Decide the analysis angles: explicit custom --agents-json (names only), else
+  // built-in personas.
+  let agentNames = null;   // custom angle names
+  let personas = null;     // built-in persona names
   try {
     if (flags["agents-json"] != null && flags["agents-json"] !== "") {
-      const v = validateAgentsJson(flags["agents-json"]);
-      agents = v.json;
-      agentNames = v.names;
+      agentNames = validateAgentsJson(flags["agents-json"]).names;
     } else {
       personas = validatePersonas(flags.personas);
     }
@@ -1813,13 +1809,12 @@ function cmdFanOut({ flags, positional }) {
   let baseArgs;
   try {
     baseArgs = grokBaseArgs({
-      readOnly: !writeMode,   // read-only analysis by default; Agent/task tool stays enabled
+      readOnly: !writeMode,   // single agent: the normal plan-mode read-only strip is fine
       model: flags.model,
       jsonOutput: true,
       effort,
       check: checkFlag,
       disableWebSearch,
-      agents,                 // null in persona mode; canonical json in custom mode
       ...extractPolicyFlags(flags)
     });
   } catch (e) {
@@ -1831,7 +1826,7 @@ function cmdFanOut({ flags, positional }) {
   const extraEnv = webFetchEnvOverride({ noWebFetch: !!flags["no-web-fetch"] || disableWebSearch });
   runHeadlessGrok({
     args, timeoutMs, label: "fan-out", extraEnv,
-    timeoutHint: "Fan-out runs several subagents; re-run with --timeout 0 to disable or a longer --timeout like 1h."
+    timeoutHint: "Re-run with --timeout 0 to disable or a longer --timeout like 1h."
   });
 }
 

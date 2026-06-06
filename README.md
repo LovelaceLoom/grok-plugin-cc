@@ -99,7 +99,7 @@ expose plugin slash commands; instead, the model auto-invokes the matching
 | `/grok:review` | Review uncommitted changes (working-tree, staged, or branch diff). Foreground or background. |
 | `/grok:adversarial-review` | Like `/grok:review`, but the prompt tells Grok to challenge the design and surface failure modes. |
 | `/grok:research <question>` | Deep research with Grok — `--check` self-verification loop + live web search **and** web_fetch enabled by default. Add `--stream` for a live answer. |
-| `/grok:fan-out <task>` | One Grok call that dispatches several subagents in parallel (default: researcher, reviewer, security-auditor, test-writer), each analyzing the task from a different angle, then synthesizes one consolidated answer. Read-only by default; `--write` is gated. Pick angles with `--personas`, or custom subagents with `--agents-json`. |
+| `/grok:fan-out <task>` | One Grok call that analyzes the task from several expert angles in turn (default: researcher, reviewer, security-auditor, test-writer) and synthesizes one consolidated report (a section per angle + a verdict) — deeper than a plain `/grok:ask`. Read-only by default; `--write` is gated. Pick angles with `--personas`, or name custom angles with `--agents-json`. |
 | `/grok:models [--set-default <id>]` | List Grok models via `grok models`; optionally pin the workspace default. |
 | `/grok:best-of <N> <prompt>` | Run a prompt N ways in parallel (`grok --best-of-n N`, capped at 8) and return Grok's best answer. |
 | `/grok:aggregate-review [focus]` | Run the same diff-review against codex + gemini + grok in parallel; aggregate verdicts into a unified report. Needs ≥2 CLIs installed. |

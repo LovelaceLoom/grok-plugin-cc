@@ -68,17 +68,22 @@ test("B2: lib/git.mjs no longer puts `--` before the refspec in branch diff", ()
 // B3 — read-only vs auth-probe tool policy is exported as named constants
 // ============================================================================
 
-test("B3: READ_ONLY_DISALLOWED_TOOLS bans writes + shell but leaves web tools", () => {
-  // Read-only ops (ask/review/adversarial-review) should NOT ban web_search /
-  // web_fetch / Agent — Grok's biggest differentiator vs Claude is live web
-  // search, and the prompting skill explicitly tells the model to use it.
+test("B3: READ_ONLY_DISALLOWED_TOOLS bans writes + shell + subagents but leaves web tools", () => {
+  // Read-only ops (ask/review/research/fan-out) keep web_search / web_fetch —
+  // Grok's biggest differentiator vs Claude is live web grounding.
   const banned = new Set(READ_ONLY_DISALLOWED_TOOLS.split(","));
   assert.ok(banned.has("search_replace"), "search_replace must be banned in read-only");
   assert.ok(banned.has("run_terminal_cmd"), "run_terminal_cmd must be banned in read-only");
   assert.ok(banned.has("todo_write"), "todo_write must be banned in read-only");
   assert.ok(!banned.has("web_search"), "web_search must NOT be banned in read-only (Grok strength)");
   assert.ok(!banned.has("web_fetch"), "web_fetch must NOT be banned in read-only");
-  assert.ok(!banned.has("Agent"), "Agent must NOT be banned in read-only");
+  // v1.2.0 (CRITICAL, grok 0.2.22): Agent (subagents) MUST be banned in
+  // read-only. On 0.2.22 the auto-included subagent-control tools
+  // (get_task_output/wait_tasks/kill_task) require run_terminal_cmd, which
+  // read-only strips — so leaving Agent enabled made `grok -p` fail at agent
+  // build ("Requirements unsatisfied") for every read-only command. Banning
+  // Agent removes those tools and the unmet requirement.
+  assert.ok(banned.has("Agent"), "Agent must be banned in read-only (0.2.22 build-requirement fix)");
 });
 
 test("B3: AUTH_PROBE_DISALLOWED_TOOLS bans every tool for the deterministic probe", () => {

@@ -452,10 +452,21 @@ export function detectAuthSource() {
 }
 
 // Tools to disallow for read-only operations (ask, review,
-// adversarial-review). Strips write + shell capabilities but deliberately
-// leaves web_search / web_fetch / Agent intact so Grok can ground reviews
-// in current docs or X discourse — that is Grok's primary differentiator
-// against Claude's knowledge cutoff.
+// adversarial-review, research, fan-out). Strips write + shell capabilities but
+// deliberately leaves web_search / web_fetch intact so Grok can ground its
+// answers in current docs or X discourse — that is Grok's primary
+// differentiator against Claude's knowledge cutoff.
+//
+// v1.2.0 (CRITICAL, grok 0.2.22): `Agent` (subagent spawning) is now ALSO
+// disabled. On 0.2.22 the agent builder auto-includes the subagent-control
+// tools (get_task_output / wait_tasks / kill_task) whenever subagents are
+// enabled, and those tools REQUIRE a background-capable bash tool
+// (run_terminal_cmd) to be present. Because read-only mode strips
+// run_terminal_cmd, leaving subagents enabled made the agent build fail
+// outright — "Requirements unsatisfied" — breaking EVERY read-only command
+// (ask/review/research) under -p. Disabling Agent removes the subagent-control
+// tools and the unmet requirement. Read-only commands are single-shot and do
+// not need subagents anyway; web grounding is unaffected.
 //
 // These tool IDs come from the README's "Tool Filtering" section, not
 // display names.
@@ -472,7 +483,7 @@ export function detectAuthSource() {
 // (Claude Sonnet wrapper), not by grok itself. Banning them from
 // grok's tool surface closes the loop entirely.
 export const GROK_PLUGIN_SKILL_NAMES = "grok-cli-runtime,grok-prompting,grok-result-handling";
-export const READ_ONLY_DISALLOWED_TOOLS = `search_replace,run_terminal_cmd,todo_write,${GROK_PLUGIN_SKILL_NAMES}`;
+export const READ_ONLY_DISALLOWED_TOOLS = `Agent,search_replace,run_terminal_cmd,todo_write,${GROK_PLUGIN_SKILL_NAMES}`;
 
 // Tools to disallow during the auth probe. The probe sends a trivial "say
 // OK" prompt — it has no business calling ANY tool, so we ban the full
@@ -737,32 +748,30 @@ export function validateAgentsJson(input, { maxAgents = MAX_FANOUT_AGENTS } = {}
   return { json, names };
 }
 
-// Build the orchestration prompt that drives a fan-out. In persona mode the
-// listed names are Grok built-in personas applied via the `task` tool's
-// `persona` parameter; in custom mode they are the names of the inline
-// `--agents` subagents. Either way Grok is told to dispatch all of them in
-// parallel and then synthesize a single consolidated report itself.
+// Build the fan-out prompt: ONE Grok agent analyzes the task from several
+// expert angles in turn, then synthesizes a single consolidated report. We
+// deliberately do NOT ask Grok to spawn parallel `task`-tool subagents:
+// in headless read-only mode a subagent's denied tool call (e.g.
+// run_terminal_command under dontAsk) cancels the whole turn and yields empty
+// output. A single agent sweeping the angles is reliable and still delivers the
+// multi-perspective depth. The angle names double as Grok persona names
+// (reviewer / security-auditor / ...), which steer its framing per section.
 export function buildFanOutPrompt(task, { personas = null, agentNames = null } = {}) {
   const t = String(task == null ? "" : task).trim();
   const custom = Array.isArray(agentNames) && agentNames.length > 0;
   const names = custom ? agentNames : (personas || []);
   const bullets = names.map(n => `  - ${n}`).join("\n");
-  const dispatchLine = custom
-    ? "Use your `task` tool to spawn EACH of your configured custom subagents below, running them in parallel:"
-    : "Use your `task` tool to spawn one subagent per item below — set the `persona` parameter to each name — and run them in parallel:";
   return [
-    "You are orchestrating a parallel, multi-angle analysis. Do not answer the task directly yet.",
-    "",
-    dispatchLine,
+    "Analyze the TASK below from EACH of the following expert angles, treating each as a separate, focused pass.",
+    "Think and report AS that specialist would, and keep the angles independent — don't let one angle's conclusion bias another:",
     bullets,
     "",
-    "Rules:",
-    "  - Dispatch ALL of the above subagents concurrently (issue the task calls together; do not finish one before starting the next).",
-    "  - Each subagent analyzes the TASK strictly from its own specialty angle, independently.",
-    "  - After EVERY subagent has returned, synthesize their findings yourself into a single consolidated report:",
-    "      1. One short section per angle with that subagent's key findings.",
-    "      2. A \"Consolidated verdict\" section reconciling agreements and conflicts, with the overall answer.",
-    "  - Proceed autonomously; do not ask clarifying questions. State any assumptions you make.",
+    "Then produce ONE consolidated report:",
+    "  1. A section per angle (`## <angle>`) with that specialist's key findings.",
+    "  2. A `## Consolidated verdict` section reconciling agreements and conflicts, with the overall answer.",
+    "",
+    "Be thorough in each angle — this is meant to go deeper than a single quick pass. Proceed autonomously; do not ask",
+    "clarifying questions. State any assumptions you make.",
     "",
     "TASK:",
     t

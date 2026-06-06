@@ -11,17 +11,33 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 adds a fan-out primitive plus grounding/context levers so Claude can pull more
 power out of Grok per call.**
 
+### Fixed (critical)
+
+- **Every read-only command (`/grok:ask`, `/grok:review`, `/grok:research`)
+  was broken on Grok CLI 0.2.22** — `grok -p` failed at agent build with
+  "Requirements unsatisfied". On 0.2.22 the agent builder auto-includes the
+  subagent-control tools (`get_task_output` / `wait_tasks` / `kill_task`)
+  whenever subagents are enabled, and those tools require a background-capable
+  bash tool (`run_terminal_cmd`). Read-only mode strips `run_terminal_cmd`, so
+  leaving subagents (`Agent`) enabled made the whole agent build fail. Fix:
+  `Agent` is now in `READ_ONLY_DISALLOWED_TOOLS` — read-only commands are
+  single-shot and don't need subagents; web grounding is unaffected.
+  (This was caught by real end-to-end verification; a static audit missed it.)
+
 ### Added
 
 - **`/grok:fan-out` + the `grok-fan-out` skill — multi-angle analysis in one
-  call.** Grok dispatches several subagents in parallel (default personas:
-  `researcher`, `reviewer`, `security-auditor`, `test-writer`) via its `task`
-  tool, then synthesizes one consolidated report. Read-only by default;
-  `--write` is gated by `GROK_PLUGIN_ALLOW_WRITE=1`. Pick angles with
-  `--personas a,b,c`, or supply custom inline subagents with
-  `--agents-json '<json>'` (validated: count cap, name sanity, recursive
-  control-byte scrub, ARG_MAX size cap; the field schema is validated by Grok).
-- **`--agents <json>` passthrough** in `grokBaseArgs` (`validateAgentsJson`).
+  call.** One Grok agent analyzes the task from several expert angles in turn
+  (default: `researcher`, `reviewer`, `security-auditor`, `test-writer`) and
+  synthesizes a single consolidated report with a section per angle plus a
+  consolidated verdict — deeper coverage than a plain `/grok:ask`. Read-only by
+  default; `--write` is gated by `GROK_PLUGIN_ALLOW_WRITE=1`. Pick angles with
+  `--personas a,b,c`, or name custom angles with `--agents-json '<json>'`
+  (validated: count cap, name sanity, recursive control-byte scrub, depth cap,
+  ARG_MAX size cap). NOTE: this does not spawn parallel `task`-tool subagents —
+  that proved unreliable headless (a subagent's denied tool call cancels the
+  turn → empty output); a single multi-angle pass always returns text. True
+  plugin-orchestrated parallel fan-out is a possible future enhancement.
 - **web_fetch grounding ON by default** for `/grok:research`, `/grok:ask`, and
   `/grok:fan-out` (`GROK_WEB_FETCH=1`) — Grok can fetch a pasted URL, not just
   search. Opt out with `--no-web-fetch`; a user-set `GROK_WEB_FETCH` or

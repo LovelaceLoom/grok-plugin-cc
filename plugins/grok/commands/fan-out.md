@@ -1,18 +1,20 @@
 ---
-description: Fan out one Grok call across several parallel subagents (multi-angle analysis), then synthesize one consolidated answer
+description: Analyze a task from several expert angles in one Grok call, then synthesize one consolidated answer
 argument-hint: '[--personas a,b,c | --agents-json <json>] [--model <model>] [--no-web-fetch] [--write] [--timeout <duration>] <task>'
 disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---
 
-Run a single Grok call that dispatches several subagents **in parallel** — each analyzing the task from a different specialty angle — and returns one synthesized, consolidated answer. This is the "use Grok in many directions in one shot" command: more coverage and depth per call than a plain `/grok:ask`.
+Run a single Grok call that analyzes the task from several expert angles in turn — each as a focused, independent pass — and returns one synthesized, consolidated answer (a section per angle plus a consolidated verdict). This is the "use Grok in many directions in one shot" command: more coverage and depth per call than a plain `/grok:ask`.
 
 How it works:
-- **Default**: Grok dispatches built-in personas via its `task` tool — `researcher`, `reviewer`, `security-auditor`, `test-writer` — each analyzing the task independently, then Grok synthesizes their findings.
-- **`--personas a,b,c`**: pick a subset of built-in personas (`researcher`, `reviewer`, `security-auditor`, `test-writer`, `implementer`, `design-doc-writer`, `design-doc-reviewer`).
-- **`--agents-json '<json>'`**: supply custom inline subagent definitions as a JSON array (advanced). Each object needs a `name`; the plugin validates a safety envelope and passes the rest through to `grok --agents`.
-- Read-only by default (the subagents analyze, they don't edit). **`--write`** opens it up for change-making fan-outs and requires `GROK_PLUGIN_ALLOW_WRITE=1` in the environment.
+- **Default angles**: `researcher`, `reviewer`, `security-auditor`, `test-writer`. Grok analyzes the task as each specialist would, then synthesizes the findings.
+- **`--personas a,b,c`**: pick a subset of built-in angle names (`researcher`, `reviewer`, `security-auditor`, `test-writer`, `implementer`, `design-doc-writer`, `design-doc-reviewer`).
+- **`--agents-json '<json>'`**: name custom angles via a JSON array (advanced). Each object needs a `name`; the plugin validates a safety envelope and uses the names as analysis lenses.
+- Read-only by default. **`--write`** opens it up for change-making runs and requires `GROK_PLUGIN_ALLOW_WRITE=1` in the environment.
 - Web-fetch grounding is **on** by default (pass `--no-web-fetch` to opt out).
+
+Note: this runs one Grok agent that sweeps the angles, not parallel subagents — that proved unreliable in headless mode. You still get genuine multi-perspective depth in one consolidated report.
 
 Raw user input:
 `$ARGUMENTS`
