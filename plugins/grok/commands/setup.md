@@ -34,7 +34,7 @@ If Grok is already installed:
 If Grok is installed but not authenticated, the JSON `nextSteps` will spell out the two options. Present them to the user verbatim. The two valid options are:
 
 1. Run `!grok login` and complete the browser OAuth flow.
-2. Set `GROK_CODE_XAI_API_KEY` (get a key from https://console.x.ai) — either inline (`export GROK_CODE_XAI_API_KEY=...`) or in `~/.claude/settings.json` under `env`.
+2. Set `XAI_API_KEY` (get a key from https://console.x.ai) — either inline (`export XAI_API_KEY=...`) or in `~/.claude/settings.json` under `env`. (The legacy `GROK_CODE_XAI_API_KEY` still works as a fallback.)
 
 Output rules:
 - Present the parsed setup output as a short status block to the user.

@@ -45,5 +45,5 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/companion.mjs" research "<the user's researc
 ## Output rules
 
 - Return the companion's stdout **verbatim**. Grok's research includes citations and reasoning — preserve them.
-- If stderr contains a `[hint: ...]` line about auth, surface it and direct the user to `grok login` / `GROK_CODE_XAI_API_KEY`.
+- If stderr contains a `[hint: ...]` line about auth, surface it and direct the user to `grok login` / `XAI_API_KEY`.
 - Do not editorialize on Grok's findings unless the user explicitly asks for your take.

@@ -38,9 +38,12 @@ const ALLOWED_ENV_KEYS = new Set([
   // XDG base dirs (the user's ~/.grok/ stays at $HOME, but corporate
   // environments can re-home via these — keep them passed through).
   "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR",
-  // Grok / xAI authentication and endpoint overrides (all from the
-  // README's "Environment Variables" section)
-  "GROK_CODE_XAI_API_KEY",          // API key from console.x.ai
+  // Grok / xAI authentication and endpoint overrides. Names verified against
+  // the installed CLI README "Environment Variables" section (0.2.22). The
+  // primary API-key variable is XAI_API_KEY; the binary also reads
+  // GROK_CODE_XAI_API_KEY as a lower-priority global fallback.
+  "XAI_API_KEY",                    // primary API key (console.x.ai) — documented headless auth var
+  "GROK_CODE_XAI_API_KEY",          // legacy/global fallback API key (still honored by the binary)
   "GROK_CLI_CHAT_PROXY_BASE_URL",   // proxy URL override
   "GROK_MODELS_BASE_URL",
   "GROK_MODELS_LIST_URL",
@@ -60,12 +63,15 @@ const ALLOWED_ENV_KEYS = new Set([
   "GROK_AGENT",                     // custom agent definition path
   "GROK_RESPECT_GITIGNORE",         // 0/1
   "GROK_FEEDBACK_ENABLED",
-  "GROK_DISABLE_TELEMETRY",         // explicit telemetry kill switch
+  "GROK_TELEMETRY_ENABLED",         // telemetry on/off (1/0) — the real 0.2.22 var (was GROK_DISABLE_TELEMETRY, which never existed)
   "GROK_DEPLOYMENT_KEY",
   "GROK_LOG_FILE",
   "GROK_LOG_FILTER",
   "GROK_SANDBOX",                   // sandbox profile
   "GROK_LSP_TOOLS",
+  // v1.2.0 — context compaction controls (used by /grok:research deep mode).
+  "GROK_COMPACTION_MODE",           // summary|transcript|segments
+  "GROK_COMPACTION_DETAIL",         // none|minimal|balanced|verbose
   // Logging (stderr in headless)
   "RUST_LOG",
   // Plugin-level override for the default model (similar to GEMINI_PLUGIN_MODEL)
@@ -85,13 +91,28 @@ const ALLOWED_ENV_KEYS = new Set([
 // LC_* covers all locale category overrides (LC_NUMERIC, LC_TIME, etc.).
 const ALLOWED_PREFIXES = ["LC_"];
 
-export function cleanGrokEnv(parent = process.env) {
+// cleanGrokEnv builds the allowlisted environment for the spawned `grok`
+// process. The optional `overrides` object lets a caller FORCE specific
+// values (e.g. GROK_WEB_FETCH=1 for research/ask) — but only for keys that
+// are already on the allowlist. A non-allowlisted override is silently
+// dropped, so this can never become a hole that re-introduces a secret the
+// allowlist exists to strip. Non-string override values are ignored too.
+export function isAllowedEnvKey(k) {
+  return ALLOWED_ENV_KEYS.has(k) || ALLOWED_PREFIXES.some(p => k.startsWith(p));
+}
+
+export function cleanGrokEnv(parent = process.env, overrides = null) {
   const out = Object.create(null);
   for (const k of Object.keys(parent)) {
     const v = parent[k];
     if (typeof v !== "string") continue;
-    if (ALLOWED_ENV_KEYS.has(k) || ALLOWED_PREFIXES.some(p => k.startsWith(p))) {
-      out[k] = v;
+    if (isAllowedEnvKey(k)) out[k] = v;
+  }
+  if (overrides) {
+    for (const k of Object.keys(overrides)) {
+      const v = overrides[k];
+      if (typeof v !== "string") continue;
+      if (isAllowedEnvKey(k)) out[k] = v;
     }
   }
   return out;
@@ -284,64 +305,75 @@ export function effortFlagForModel({ effort, model, cwd, kind = "effort" } = {})
 //
 // The probe is conservative: it only checks for the flag tokens we depend on,
 // not exhaustively. Missing flags are reported by name.
+// The flag tokens this plugin depends on. Each entry is the smallest
+// distinctive substring guaranteed to appear in `grok --help` output for the
+// flag in question. Exported so the contract is testable without spawning grok.
+//
+// Note that `grok --help` lists `--always-approve` while the README documents
+// both `--yolo` and `--always-approve` as equivalent aliases; we look for the
+// help-visible name and use `--yolo` in actual invocations (matches the
+// README's examples and is shorter).
+//
+// `--cwd` is intentionally NOT in the required list even though grok exposes
+// it. The plugin does not pass `--cwd` to the child — we use `spawn(..., {
+// cwd })` instead, which is the canonical way to set the working directory of
+// a Node child process. Listing `--cwd` as required would let a future grok
+// release that drops the flag falsely break /grok:setup over a capability we
+// never depended on.
+export const CAPABILITY_REQUIRED_FLAGS = [
+  "-p, --single",
+  "-m, --model",
+  "--output-format",
+  "--always-approve",
+  "--permission-mode",
+  "--max-turns",
+  "--disallowed-tools",
+  "--prompt-file",
+  // v0.6.0 — flags required by /grok:research, /grok:best-of, /grok:models.
+  "--effort",
+  "--check",
+  "--best-of-n",
+  "--disable-web-search",
+  // v0.8.0 — permission rule flags + advanced controls. Same G1
+  // motivation: if grok is updated and these are renamed, fail at
+  // setup time (clear error) rather than at user-call time (silent
+  // "unknown option" stderr).
+  "--allow",
+  "--deny",
+  "--tools",
+  "--rules",
+  "--no-subagents",
+  "--no-plan",
+  "--reasoning-effort",
+  "--system-prompt-override",
+  "--verbatim",
+  "--sandbox",
+  "--agent",
+  // v0.9.0 — session / worktree / memory passthroughs
+  "-w, --worktree",
+  "-c, --continue",
+  "-r, --resume",
+  "--restore-code",
+  "--no-memory",
+  "--experimental-memory",
+  // v1.2.0 — fan-out (inline subagents) + structured prompt content blocks.
+  "--agents",
+  "--prompt-json"
+];
+
+// Capability probe — verify that the flags this plugin relies on actually
+// exist in the installed `grok` binary. Catches breaking changes where Grok
+// renames a flag without bumping a major version. Surfaced through /grok:setup.
+//
+// The probe is conservative: it only checks for the flag tokens we depend on,
+// not exhaustively. Missing flags are reported by name.
 export function capabilityProbe() {
   const r = spawnSync("grok", ["--help"], { encoding: "utf8", env: cleanGrokEnv() });
   if (r.status !== 0) {
     return { ok: false, reason: "could not run grok --help", missing: [] };
   }
   const help = r.stdout || "";
-  // Each entry is the smallest distinctive substring guaranteed to appear in
-  // `grok --help` output for the flag in question.
-  // The flag tokens we depend on. Note that `grok --help` lists
-  // `--always-approve` while the README documents both `--yolo` and
-  // `--always-approve` as equivalent aliases; we look for the help-visible
-  // name and use `--yolo` in actual invocations (matches the README's
-  // examples and is shorter).
-  //
-  // `--cwd` is intentionally NOT in the required list even though grok
-  // exposes it. The plugin does not pass `--cwd` to the child — we use
-  // `spawn(..., { cwd })` instead, which is the canonical way to set the
-  // working directory of a Node child process. Listing `--cwd` as required
-  // would let a future grok release that drops the flag falsely break
-  // /grok:setup over a capability we never depended on.
-  const required = [
-    "-p, --single",
-    "-m, --model",
-    "--output-format",
-    "--always-approve",
-    "--permission-mode",
-    "--max-turns",
-    "--disallowed-tools",
-    "--prompt-file",
-    // v0.6.0 — flags required by /grok:research, /grok:best-of, /grok:models.
-    "--effort",
-    "--check",
-    "--best-of-n",
-    "--disable-web-search",
-    // v0.8.0 — permission rule flags + advanced controls. Same G1
-    // motivation: if grok is updated and these are renamed, fail at
-    // setup time (clear error) rather than at user-call time (silent
-    // "unknown option" stderr).
-    "--allow",
-    "--deny",
-    "--tools",
-    "--rules",
-    "--no-subagents",
-    "--no-plan",
-    "--reasoning-effort",
-    "--system-prompt-override",
-    "--verbatim",
-    "--sandbox",
-    "--agent",
-    // v0.9.0 — session / worktree / memory passthroughs
-    "-w, --worktree",
-    "-c, --continue",
-    "-r, --resume",
-    "--restore-code",
-    "--no-memory",
-    "--experimental-memory"
-  ];
-  const missing = required.filter(token => !help.includes(token));
+  const missing = CAPABILITY_REQUIRED_FLAGS.filter(token => !help.includes(token));
   return { ok: missing.length === 0, missing };
 }
 
@@ -359,7 +391,7 @@ export function classifyAuthBlob(blob) {
   if (!blob) return null;
   // OAuth flow appearing in headless output means the binary is trying to
   // launch the browser flow, which is the canonical signal of missing auth.
-  if (/auth\.x\.ai\/oauth2\/authorize|Signing in with Grok|GROK_CODE_XAI_API_KEY|console\.x\.ai/i.test(blob)) {
+  if (/auth\.x\.ai\/oauth2\/authorize|Signing in with Grok|XAI_API_KEY|GROK_CODE_XAI_API_KEY|console\.x\.ai/i.test(blob)) {
     return "no auth method configured";
   }
   if (/token.*expired|refresh.*token|reauthenticate/i.test(blob)) {
@@ -380,6 +412,7 @@ export function classifyAuthBlob(blob) {
 // Best-effort label for what the active auth source is. Only meaningful when
 // the auth probe succeeds; called purely for the setup report.
 export function detectAuthSource() {
+  if (process.env.XAI_API_KEY) return "XAI_API_KEY env";
   if (process.env.GROK_CODE_XAI_API_KEY) return "GROK_CODE_XAI_API_KEY env";
   if (process.env.GROK_AUTH_PROVIDER_COMMAND) return "external auth provider";
   if (process.env.GROK_OIDC_ISSUER) return "OIDC";
@@ -776,23 +809,23 @@ export function authProbe(model) {
   );
   const blob = (r.stdout || "") + "\n" + (r.stderr || "");
 
-  // Try to parse the JSON envelope. Grok's --output-format json shape is:
-  //   { "text": "...", "stopReason": "EndTurn", "sessionId": "...", "requestId": "..." }
-  // or on error:
-  //   { "type": "error", "message": "..." }
-  let parsed = null;
-  if (r.stdout) {
-    try { parsed = JSON.parse(r.stdout.trim()); } catch {}
-  }
-
   if (r.error?.code === "ETIMEDOUT") {
     return { ok: false, detail: "auth probe timed out", model: model || effectiveModel() };
   }
-  if (parsed && parsed.type === "error") {
+
+  // v1.2.0: parse via the shared, hardened parseGrokJson rather than a bare
+  // JSON.parse on stdout. The bare parse failed whenever grok's Rust tracing
+  // layer leaked a single colored log line around the envelope — a perfectly
+  // authenticated account would then be reported as "probe failed", and
+  // /grok:setup would tell the user to re-login for no reason. parseGrokJson
+  // strips ANSI/OSC, recovers the last balanced object, and handles
+  // streaming-json — so the probe is robust to noisy stdout.
+  const parsed = parseGrokJson(r.stdout || "");
+  if (parsed.kind === "error") {
     const why = classifyAuthBlob(parsed.message || blob);
     return { ok: false, detail: why || "error response", raw: (parsed.message || "").slice(0, 400), model: model || effectiveModel() };
   }
-  if (r.status === 0 && parsed && /\bOK\b/i.test(parsed.text || "")) {
+  if (r.status === 0 && parsed.kind === "text" && /\bOK\b/i.test(parsed.text || "")) {
     return { ok: true, detail: "responsive", model: model || effectiveModel() };
   }
   const why = classifyAuthBlob(blob);
@@ -815,6 +848,41 @@ export function authProbe(model) {
 // stop-review-gate-hook.mjs::parseGrokJsonEnvelope. The two copies
 // were each evolving slightly differently — Codex flagged the drift
 // risk in round 3. Single source of truth now.
+// v1.2.0: reconstruct a `--output-format streaming-json` (NDJSON) stream into
+// the same shape the single-object json envelope yields. Each line is a
+// self-contained event: {type:"text",data}, {type:"thought",data},
+// {type:"error",message}, {type:"end",stopReason,sessionId,requestId}. We
+// concatenate the `text` events' data, surface the first error, and pull
+// session metadata from the `end` event. Returns null when the input is not
+// recognizable as a multi-event stream (so the caller falls through to the
+// single-object path). This is a defensive guard: every plugin path requests
+// `--output-format json` explicitly today, but a remote/default flip to
+// streaming-json would otherwise silently degrade every command to "unknown".
+export function reconstructStreamingJson(clean) {
+  const lines = clean.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (lines.length === 0) return null;
+  let text = "";
+  let sessionId = null;
+  let stopReason = null;
+  let errorMsg = null;
+  let events = 0;
+  for (const line of lines) {
+    let ev = null;
+    try { ev = JSON.parse(line); } catch { continue; }
+    if (!ev || typeof ev !== "object" || typeof ev.type !== "string") continue;
+    events++;
+    if (ev.type === "text" && typeof ev.data === "string") text += ev.data;
+    else if (ev.type === "error" && errorMsg == null) errorMsg = ev.message || ev.data || "";
+    else if (ev.type === "end") {
+      sessionId = ev.sessionId || null;
+      stopReason = ev.stopReason || null;
+    }
+  }
+  if (events === 0) return null;
+  if (errorMsg != null) return { kind: "error", message: errorMsg };
+  return { kind: "text", text, sessionId, stopReason };
+}
+
 export function parseGrokJson(raw) {
   if (!raw) return { kind: "unknown" };
   const clean = sanitizeForTerminal(raw).trim();
@@ -835,6 +903,13 @@ export function parseGrokJson(raw) {
       sessionId: parsed.sessionId || null,
       stopReason: parsed.stopReason || null
     };
+  }
+  // streaming-json (NDJSON) guard: the object we parsed is a stream event
+  // (`{type:"text"|"thought"|"end"}`) rather than the single json envelope.
+  // Reassemble the full stream rather than degrading to "unknown".
+  if (parsed.type === "text" || parsed.type === "thought" || parsed.type === "end") {
+    const recon = reconstructStreamingJson(clean);
+    if (recon) return recon;
   }
   return { kind: "unknown" };
 }

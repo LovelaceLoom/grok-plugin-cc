@@ -41,5 +41,5 @@ The `CLAUDE_PLUGIN_ROOT` env var is set by both Claude Code and Codex CLI. The c
 ## Output rules
 
 - Return the companion's stdout **verbatim**. Do not paraphrase, summarize, or wrap in additional commentary.
-- If stderr contains a `[hint: ...]` line about authentication, surface it and tell the user to run `grok login` or set `GROK_CODE_XAI_API_KEY`.
+- If stderr contains a `[hint: ...]` line about authentication, surface it and tell the user to run `grok login` or set `XAI_API_KEY`.
 - If the user's request is ambiguous about what to ask Grok, clarify with the user *before* invoking — do not ask Grok yourself.

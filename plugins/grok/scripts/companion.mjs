@@ -274,7 +274,7 @@ function cmdSetup({ flags }) {
         );
       } else if (probe.detail === "no auth method configured") {
         result.nextSteps.push(
-          "Authenticate Grok. Either:\n  - Run `!grok login` and complete the browser OAuth flow, OR\n  - Set GROK_CODE_XAI_API_KEY (get a key from https://console.x.ai) - either inline (`export GROK_CODE_XAI_API_KEY=...`) or in `~/.claude/settings.json` under `env`."
+          "Authenticate Grok. Either:\n  - Run `!grok login` and complete the browser OAuth flow, OR\n  - Set XAI_API_KEY (get a key from https://console.x.ai) - either inline (`export XAI_API_KEY=...`) or in `~/.claude/settings.json` under `env`. (The legacy GROK_CODE_XAI_API_KEY still works as a fallback.)"
         );
       } else {
         result.nextSteps.push(`Grok auth probe failed (${probe.detail}). Try \`!grok login\` to refresh credentials.`);

@@ -57,5 +57,5 @@ In Claude Code, `--background` can run rescue via a background subagent. In Code
 
 - Return the companion's stdout **verbatim**. Do not paraphrase, summarize, or add commentary before or after.
 - Do not inspect files, monitor progress, poll status, fetch results, cancel jobs, or do follow-up work of your own — this skill is a **forwarder**.
-- If the helper reports Grok is missing or unauthenticated, surface the message and direct the user to run `grok login` or set `GROK_CODE_XAI_API_KEY`.
+- If the helper reports Grok is missing or unauthenticated, surface the message and direct the user to run `grok login` or set `XAI_API_KEY`.
 - On timeout (exit 124), surface the timeout to the user rather than retrying with a longer window.
