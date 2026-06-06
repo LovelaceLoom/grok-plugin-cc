@@ -27,6 +27,11 @@ test("webFetchEnvOverride respects a user-set GROK_WEB_FETCH (no override)", () 
   assert.deepEqual(webFetchEnvOverride({ parentEnv: { GROK_WEB_FETCH: "1" } }), {});
 });
 
+test("webFetchEnvOverride treats an explicit empty GROK_WEB_FETCH as set (does not force ON)", () => {
+  // `export GROK_WEB_FETCH=` is the user explicitly clearing it; respect it.
+  assert.deepEqual(webFetchEnvOverride({ parentEnv: { GROK_WEB_FETCH: "" } }), {});
+});
+
 test("webFetchEnvOverride output flows through cleanGrokEnv as an allowlisted override", () => {
   const env = cleanGrokEnv({ PATH: "/usr/bin" }, webFetchEnvOverride({ parentEnv: {} }));
   assert.equal(env.GROK_WEB_FETCH, "1");

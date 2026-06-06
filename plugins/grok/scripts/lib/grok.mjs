@@ -122,13 +122,21 @@ export function cleanGrokEnv(parent = process.env, overrides = null) {
 // (research / ask / fan-out). Grok's web_fetch tool is OFF unless
 // GROK_WEB_FETCH=1, so the URL the user pasted can't be fetched by default —
 // one of Grok's grounding differentiators is dormant. We turn it ON by default
-// but: (1) honor an explicit --no-web-fetch opt-out, and (2) never clobber a
-// value the user already set in their environment. Returns an overrides object
-// suitable for cleanGrokEnv's second argument (empty = leave env as-is).
+// but with two overrides of that default:
+//   (1) An explicit offline flag wins. noWebFetch is true for --no-web-fetch
+//       AND for --no-web-search (callers OR them) — both are explicit "go
+//       offline" intents, so they force GROK_WEB_FETCH=0 even if the user's
+//       env had it on. This is deliberate: an explicit per-call flag outranks
+//       a passively-exported default.
+//   (2) Otherwise, never clobber a GROK_WEB_FETCH the user set in their env —
+//       ANY string value (including an explicit empty "") counts as "set" and
+//       is left untouched.
+// Returns an overrides object for cleanGrokEnv's second argument (empty = leave
+// env as-is).
 export function webFetchEnvOverride({ noWebFetch = false, parentEnv = process.env } = {}) {
   if (noWebFetch) return { GROK_WEB_FETCH: "0" };
   const existing = parentEnv ? parentEnv.GROK_WEB_FETCH : undefined;
-  if (typeof existing === "string" && existing !== "") return {};
+  if (typeof existing === "string") return {};   // user set it (incl. ""): respect it
   return { GROK_WEB_FETCH: "1" };
 }
 
@@ -369,10 +377,17 @@ export const CAPABILITY_REQUIRED_FLAGS = [
   "-r, --resume",
   "--restore-code",
   "--no-memory",
-  "--experimental-memory",
-  // v1.2.0 — fan-out (inline subagents) + structured prompt content blocks.
-  "--agents",
-  "--prompt-json"
+  "--experimental-memory"
+];
+
+// Advisory-only capabilities. Used by some commands but NOT load-bearing for the
+// core (setup/ask/review/research). A grok build that lacks one of these is
+// reported in the setup report but does NOT flip readiness to false — otherwise
+// a user who never touches custom fan-out would be blocked over a flag they
+// never use. (--prompt-json is intentionally NOT listed: the plugin never emits
+// it, so requiring it could only manufacture a false not-ready.)
+export const CAPABILITY_OPTIONAL_FLAGS = [
+  "--agents"   // v1.2.0 custom-mode /grok:fan-out only
 ];
 
 // Capability probe — verify that the flags this plugin relies on actually
@@ -388,7 +403,9 @@ export function capabilityProbe() {
   }
   const help = r.stdout || "";
   const missing = CAPABILITY_REQUIRED_FLAGS.filter(token => !help.includes(token));
-  return { ok: missing.length === 0, missing };
+  // Advisory: surfaced in the setup report but never flips `ok`/readiness.
+  const missingOptional = CAPABILITY_OPTIONAL_FLAGS.filter(token => !help.includes(token));
+  return { ok: missing.length === 0, missing, missingOptional };
 }
 
 // Classify an arbitrary blob (combined stdout+stderr) into a known failure
@@ -645,7 +662,14 @@ export function validatePersonas(input) {
 // and free of non-newline control bytes (prompt bodies legitimately contain
 // newlines/tabs, so we use the MULTILINE variant). Names get a stricter check
 // at the top level before this runs.
-function scrubAgentStrings(value, where) {
+// Bound recursion depth so a pathologically nested (but small) payload throws a
+// clean validation error instead of a RangeError stack overflow. 64 is far
+// deeper than any real subagent definition.
+const MAX_AGENT_NESTING_DEPTH = 64;
+function scrubAgentStrings(value, where, depth = 0) {
+  if (depth > MAX_AGENT_NESTING_DEPTH) {
+    throw new Error(`--agents nesting too deep at ${where} (>${MAX_AGENT_NESTING_DEPTH} levels)`);
+  }
   if (typeof value === "string") {
     if (value.length > MAX_AGENT_FIELD_LEN) {
       throw new Error(`--agents field ${where} too large (>${MAX_AGENT_FIELD_LEN} chars)`);
@@ -656,11 +680,11 @@ function scrubAgentStrings(value, where) {
     return;
   }
   if (Array.isArray(value)) {
-    value.forEach((v, i) => scrubAgentStrings(v, `${where}[${i}]`));
+    value.forEach((v, i) => scrubAgentStrings(v, `${where}[${i}]`, depth + 1));
     return;
   }
   if (value && typeof value === "object") {
-    for (const k of Object.keys(value)) scrubAgentStrings(value[k], `${where}.${k}`);
+    for (const k of Object.keys(value)) scrubAgentStrings(value[k], `${where}.${k}`, depth + 1);
   }
 }
 

@@ -244,6 +244,11 @@ function cmdSetup({ flags }) {
       result.nextSteps.push(
         `Grok CLI is missing flags this plugin depends on: ${cap.missing.join(", ")}. Upgrade with \`grok update\`.`
       );
+    } else if (Array.isArray(cap.missingOptional) && cap.missingOptional.length) {
+      // Advisory only — does not affect readiness. Just one feature degrades.
+      result.nextSteps.push(
+        `Optional: this grok build lacks ${cap.missingOptional.join(", ")} — only custom-mode /grok:fan-out (--agents-json) is affected; everything else works. \`grok update\` to enable it.`
+      );
     }
   }
 
@@ -475,11 +480,20 @@ function runStreamingGrok({ args, timeoutMs, label, timeoutHint = "", extraEnv =
   let timedOut = false;
   let overflowed = false;
   let timeoutTimer = null;
+  // Hold the in-flight terminateProcessTree promise so the close handler can
+  // AWAIT it before exiting. Otherwise process.exit() cancels the SIGTERM→
+  // SIGKILL escalation and a subagent that ignores SIGTERM survives, burning
+  // paid quota (review finding #1).
+  let killPromise = null;
+  function killGroup(reason) {
+    process.stderr.write(`\n[grok-plugin] ${label} ${reason}; terminating process group.\n`);
+    if (!killPromise) killPromise = terminateProcessTree(proc.pid).catch(() => {});
+  }
   if (timeoutMs > 0) {
     timeoutTimer = setTimeout(() => {
       if (proc.exitCode !== null || proc.signalCode !== null) return;
       timedOut = true;
-      terminateProcessTree(proc.pid).catch(() => {});
+      killGroup(`timed out after ${timeoutMs}ms`);
     }, Math.min(timeoutMs, MAX_SETTIMEOUT_MS));
   }
 
@@ -495,8 +509,7 @@ function runStreamingGrok({ args, timeoutMs, label, timeoutHint = "", extraEnv =
     if (totalBytes > STREAM_MAX_BYTES) {
       if (!overflowed) {
         overflowed = true;
-        process.stderr.write(`\n[grok-plugin] ${label} stream exceeded ${STREAM_MAX_BYTES} bytes; terminating to protect memory.\n`);
-        terminateProcessTree(proc.pid).catch(() => {});
+        killGroup(`stream exceeded ${STREAM_MAX_BYTES} bytes`);
       }
       return;
     }
@@ -505,28 +518,50 @@ function runStreamingGrok({ args, timeoutMs, label, timeoutHint = "", extraEnv =
   proc.stderr.on("data", d => {
     if (stderrBuf.length < 256 * 1024) stderrBuf += d.slice(0, 256 * 1024 - stderrBuf.length);
   });
+  // A child killed mid-write (SIGKILL race) makes the pipe emit EPIPE/ECONNRESET
+  // as a stream 'error'; without these listeners that crashes the helper with an
+  // unhandled error instead of taking the clean exit path below (finding #5).
+  proc.stdout.on("error", () => {});
+  proc.stderr.on("error", () => {});
 
   proc.on("error", err => {
     if (timeoutTimer) clearTimeout(timeoutTimer);
-    process.stderr.write(`\n[grok-plugin] ${label} failed: ${err.code || err.message}\n`);
-    process.exit(1);
-  });
-
-  proc.on("close", code => {
-    if (timeoutTimer) clearTimeout(timeoutTimer);
-    parser.end();
-    const res = parser.result();
-    process.stdout.write("\n"); // terminate the streamed line cleanly
-
+    // A spawn/runtime error can race with the timeout/overflow kill. Preserve
+    // the more specific signal rather than masking it as a generic exit 1
+    // (findings #3/#4): overflow first, then timeout, then the generic error.
+    if (overflowed) process.exit(1);
     if (timedOut) {
       const hintSuffix = timeoutHint ? ` ${timeoutHint}` : "";
       process.stderr.write(`\n[grok-plugin] ${label} timed out after ${timeoutMs}ms.${hintSuffix}\n`);
       process.exit(EXIT_TIMEOUT);
     }
+    process.stderr.write(`\n[grok-plugin] ${label} failed: ${err.code || err.message}\n`);
+    process.exit(1);
+  });
+
+  proc.on("close", async code => {
+    if (timeoutTimer) clearTimeout(timeoutTimer);
+    // Ensure any kill escalation (SIGTERM→SIGKILL on the whole group) finishes
+    // before we exit — process.exit() would otherwise abandon orphaned children.
+    if (killPromise) { try { await killPromise; } catch {} }
+    parser.end();
+    const res = parser.result();
+    process.stdout.write("\n"); // terminate the streamed line cleanly
+
+    // Order matters: overflow is the more specific cause than a timeout that may
+    // have also fired while we were killing the runaway stream (finding #4).
     if (overflowed) process.exit(1);
-    if (res.kind === "error") {
-      const why = classifyAuthBlob((res.message || "") + "\n" + stderrBuf);
-      process.stderr.write(`Grok error: ${sanitizeForTerminal(res.message || "")}\n`);
+    if (timedOut) {
+      const hintSuffix = timeoutHint ? ` ${timeoutHint}` : "";
+      process.stderr.write(`\n[grok-plugin] ${label} timed out after ${timeoutMs}ms.${hintSuffix}\n`);
+      process.exit(EXIT_TIMEOUT);
+    }
+    // A real error event carries a message. An EMPTY error message is not a
+    // usable diagnostic, so fall through to the empty-stream path instead of
+    // printing a bare "Grok error:" (finding #10).
+    if (res.kind === "error" && res.message) {
+      const why = classifyAuthBlob(res.message + "\n" + stderrBuf);
+      process.stderr.write(`Grok error: ${sanitizeForTerminal(res.message)}\n`);
       if (why) process.stderr.write(`[hint: ${why}. Run /grok:setup.]\n`);
       process.exit(1);
     }
@@ -1774,6 +1809,7 @@ function cmdFanOut({ flags, positional }) {
   const fanPrompt = buildFanOutPrompt(task, agentNames ? { agentNames } : { personas });
   const effort = validateEffort(flags.effort);
   const checkFlag = !!flags.check;
+  const disableWebSearch = !!flags["no-web-search"];
   let baseArgs;
   try {
     baseArgs = grokBaseArgs({
@@ -1782,6 +1818,7 @@ function cmdFanOut({ flags, positional }) {
       jsonOutput: true,
       effort,
       check: checkFlag,
+      disableWebSearch,
       agents,                 // null in persona mode; canonical json in custom mode
       ...extractPolicyFlags(flags)
     });
@@ -1791,7 +1828,7 @@ function cmdFanOut({ flags, positional }) {
   }
   const args = ["-p", fanPrompt, ...baseArgs];
   if (flags["max-turns"] == null) args.push("--max-turns", String(DEFAULT_FANOUT_MAX_TURNS));
-  const extraEnv = webFetchEnvOverride({ noWebFetch: !!flags["no-web-fetch"] });
+  const extraEnv = webFetchEnvOverride({ noWebFetch: !!flags["no-web-fetch"] || disableWebSearch });
   runHeadlessGrok({
     args, timeoutMs, label: "fan-out", extraEnv,
     timeoutHint: "Fan-out runs several subagents; re-run with --timeout 0 to disable or a longer --timeout like 1h."

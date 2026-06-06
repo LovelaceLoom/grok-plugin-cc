@@ -17,7 +17,8 @@ import {
   detectAuthSource,
   classifyAuthBlob,
   parseGrokJson,
-  CAPABILITY_REQUIRED_FLAGS
+  CAPABILITY_REQUIRED_FLAGS,
+  CAPABILITY_OPTIONAL_FLAGS
 } from "../plugins/grok/scripts/lib/grok.mjs";
 
 // ---------- XAI_API_KEY ----------
@@ -138,10 +139,17 @@ test("parseGrokJson recovers an envelope buried under a noisy tracing line", () 
 
 // ---------- capabilityProbe exported required flags ----------
 
-test("CAPABILITY_REQUIRED_FLAGS includes the new --agents and --prompt-json flags", () => {
-  assert.ok(Array.isArray(CAPABILITY_REQUIRED_FLAGS));
-  assert.ok(CAPABILITY_REQUIRED_FLAGS.includes("--agents"));
-  assert.ok(CAPABILITY_REQUIRED_FLAGS.includes("--prompt-json"));
+test("--agents is an OPTIONAL capability (advisory), never a required one", () => {
+  // Required-but-missing fails /grok:setup entirely. --agents is only used by
+  // custom-mode fan-out, so a slightly older grok that lacks it must NOT break
+  // setup for users who never fan out. It lives in the advisory bucket instead.
+  assert.equal(CAPABILITY_REQUIRED_FLAGS.includes("--agents"), false);
+  assert.ok(Array.isArray(CAPABILITY_OPTIONAL_FLAGS));
+  assert.ok(CAPABILITY_OPTIONAL_FLAGS.includes("--agents"));
+});
+
+test("--prompt-json is not a required capability (the plugin never passes it)", () => {
+  assert.equal(CAPABILITY_REQUIRED_FLAGS.includes("--prompt-json"), false);
 });
 
 test("CAPABILITY_REQUIRED_FLAGS still includes the pre-existing core flags", () => {

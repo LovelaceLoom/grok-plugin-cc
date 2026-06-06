@@ -111,6 +111,17 @@ test("validateAgentsJson enforces a total-size cap (ARG_MAX defense)", () => {
   assert.throws(() => validateAgentsJson(huge), /too large|size/i);
 });
 
+test("validateAgentsJson rejects pathologically deep nesting with a clear error (not a RangeError)", () => {
+  // ~5000 levels is only ~10KB of JSON — under the size cap — but unbounded
+  // recursion would blow the stack. Must surface a clean validation error.
+  let deep = "x";
+  for (let i = 0; i < 5000; i++) deep = [deep];
+  assert.throws(
+    () => validateAgentsJson([{ name: "a", description: "d", extra: deep }]),
+    (e) => e instanceof Error && /deep|nest/i.test(e.message) && !(e instanceof RangeError)
+  );
+});
+
 // ---------- grokBaseArgs agents wiring ----------
 
 test("grokBaseArgs emits --agents with canonical JSON when agents are supplied", () => {

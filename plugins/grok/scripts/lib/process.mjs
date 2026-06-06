@@ -50,14 +50,25 @@ export function terminateProcessTree(pid, { graceMs = 2000 } = {}) {
   }
   return new Promise(resolve => {
     setTimeout(() => {
-      if (isAlive(pid)) {
-        if (groupKilled) {
+      if (groupKilled) {
+        // Probe the GROUP, not just the leader. A subagent can ignore the
+        // SIGTERM the leader obeyed: the leader exits, isAlive(pid) is false,
+        // and the old code skipped escalation entirely — orphaning (and paying
+        // for) the surviving child. kill(-pid, 0) succeeds while ANY group
+        // member is alive, so escalate the whole group to SIGKILL in that case.
+        // Guarding on group-liveness (rather than firing unconditionally) keeps
+        // the defense against signaling a fully-dead, possibly-reused PGID.
+        let groupAlive = false;
+        try { process.kill(-pid, 0); groupAlive = true; } catch {}
+        if (groupAlive) {
           try { process.kill(-pid, "SIGKILL"); } catch {
-            try { process.kill(pid, "SIGKILL"); } catch {}
+            try { if (isAlive(pid)) process.kill(pid, "SIGKILL"); } catch {}
           }
-        } else {
+        } else if (isAlive(pid)) {
           try { process.kill(pid, "SIGKILL"); } catch {}
         }
+      } else if (isAlive(pid)) {
+        try { process.kill(pid, "SIGKILL"); } catch {}
       }
       resolve();
     }, graceMs);
