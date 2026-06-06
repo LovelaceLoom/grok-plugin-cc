@@ -5,6 +5,25 @@ All notable changes to **grok-plugin-cc** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-06-06
+
+### Changed
+
+- **`/grok:fan-out` is now TRUE parallel, plugin-orchestrated.** The plugin
+  spawns one `grok -p` call per angle **in parallel** (each a focused read-only
+  analysis), then a final synthesis call that reconciles them into a
+  `## Consolidated verdict` — genuinely "call Grok many times in different
+  directions in one shot" (N+1 real Grok calls), like `/grok:aggregate-review`
+  fans out across CLIs. This replaces v1.2.0's single-agent multi-angle pass.
+  Verified end-to-end: a 2-angle fan-out runs both angles concurrently
+  (~one-call wall-clock) and returns a `## reviewer` + `## security-auditor` +
+  `## Consolidated verdict` report. New `lib/grok.mjs` helpers `buildAnglePrompt`
+  / `buildSynthesisPrompt` (+ `MAX_SYNTHESIS_ANGLE_CHARS` cap); new
+  `runGrokCapture` parallel-spawn helper in `companion.mjs`; the synthesis
+  prompt rides on `--prompt-file` (ARG_MAX-safe). If an angle call fails the
+  others still synthesize; if all fail, fan-out exits non-zero with per-angle
+  diagnostics.
+
 ## [1.2.0] - 2026-06-06
 
 **Tracks the xAI Grok CLI 0.2.22 surface, fixes a silent API-key auth break, and

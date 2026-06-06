@@ -5,7 +5,7 @@ disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---
 
-Run a single Grok call that analyzes the task from several expert angles in turn — each as a focused, independent pass — and returns one synthesized, consolidated answer (a section per angle plus a consolidated verdict). This is the "use Grok in many directions in one shot" command: more coverage and depth per call than a plain `/grok:ask`.
+Fan a task out across several **parallel** Grok calls — one per expert angle — then run a synthesis call that reconciles them into one consolidated answer (a section per angle plus a `## Consolidated verdict`). This is the "use Grok in many directions in one shot" command: it makes N+1 real Grok calls (the angles run concurrently), so it covers far more ground and depth than a plain `/grok:ask`.
 
 How it works:
 - **Default angles**: `researcher`, `reviewer`, `security-auditor`, `test-writer`. Grok analyzes the task as each specialist would, then synthesizes the findings.
@@ -14,7 +14,7 @@ How it works:
 - Read-only by default. **`--write`** opens it up for change-making runs and requires `GROK_PLUGIN_ALLOW_WRITE=1` in the environment.
 - Web-fetch grounding is **on** by default (pass `--no-web-fetch` to opt out).
 
-Note: this runs one Grok agent that sweeps the angles, not parallel subagents — that proved unreliable in headless mode. You still get genuine multi-perspective depth in one consolidated report.
+Note: the plugin orchestrates the parallelism itself (separate `grok -p` calls), rather than relying on Grok's internal subagent dispatch — that proved unreliable headless. So each angle is a genuine independent Grok analysis, and they run at the same time.
 
 Raw user input:
 `$ARGUMENTS`

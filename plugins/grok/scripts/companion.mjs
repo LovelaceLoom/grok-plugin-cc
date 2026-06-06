@@ -30,7 +30,7 @@ import {
   MODEL_FALLBACK_CHAIN, capabilityProbe,
   parseGrokJson, writePromptToTempFile, EFFORT_LEVELS, compareVersions, commandUsesJsonOutput,
   effortFlagForModel, grokHomeDir,
-  webFetchEnvOverride, validatePersonas, validateAgentsJson, buildFanOutPrompt,
+  webFetchEnvOverride, validatePersonas, validateAgentsJson, buildAnglePrompt, buildSynthesisPrompt,
   DEFAULT_FANOUT_PERSONAS, MAX_FANOUT_AGENTS, createStreamingJsonParser
 } from "./lib/grok.mjs";
 import { buildReviewPrompt } from "./lib/prompts.mjs";
@@ -1750,26 +1750,71 @@ function cmdResearch({ flags, positional }) {
   }
 }
 
-// ---------- v1.2.0: /grok:fan-out ----------
+// ---------- v1.2.0: /grok:fan-out (TRUE parallel, plugin-orchestrated) ----------
 //
-// One Grok call that analyzes the task from several expert angles in turn and
-// synthesizes a single consolidated answer — "use Grok in many directions in
-// one shot", with more coverage/depth than a plain /grok:ask.
+// The plugin itself fans out: it spawns one `grok -p` call PER ANGLE in
+// PARALLEL (each a focused read-only analysis), then a final synthesis call
+// that reconciles them into a consolidated verdict. This is genuinely "call
+// Grok many times in different directions in one shot" — N+1 real Grok calls.
 //
-// IMPORTANT design note: this does NOT spawn parallel `task`-tool subagents.
-// That was tried and is unreliable in headless read-only mode — a subagent's
-// denied tool call (e.g. run_terminal_command under dontAsk) cancels the whole
-// turn and yields empty output. A single agent sweeping the angles always
-// returns text and still delivers the multi-perspective depth. (True
-// plugin-orchestrated parallel fan-out is a possible future enhancement.)
+// (We do NOT rely on Grok's internal `task`-tool subagents: in headless
+// read-only mode a subagent's denied tool call cancels the whole turn and
+// yields empty output. Orchestrating from the plugin is reliable.)
 //
-// Angle names come from --personas (built-in Grok persona names, which steer
-// framing) or --agents-json (custom angle names, validated). Read-only by
-// default (plan mode); --write (gated by GROK_PLUGIN_ALLOW_WRITE=1) lets the
-// run make changes.
-const DEFAULT_FANOUT_TIMEOUT_MS = 30 * 60 * 1000; // 30 min — multi-angle sweep is slow
-const DEFAULT_FANOUT_MAX_TURNS = 200;
-function cmdFanOut({ flags, positional }) {
+// Angle names come from --personas (built-in Grok persona names) or
+// --agents-json (custom angle names, validated). Read-only by default;
+// --write (gated by GROK_PLUGIN_ALLOW_WRITE=1) lets the runs make changes.
+const DEFAULT_FANOUT_TIMEOUT_MS = 20 * 60 * 1000; // 20 min per call
+const DEFAULT_FANOUT_MAX_TURNS = 40;              // each angle is one focused pass
+
+// Spawn a single `grok` call and resolve with its parsed result (never
+// rejects). Used for both the parallel angle calls and the synthesis call.
+function runGrokCapture({ args, timeoutMs, extraEnv = null, cleanupPaths = [] }) {
+  return new Promise(resolve => {
+    let proc;
+    try {
+      proc = spawn("grok", args, { stdio: ["ignore", "pipe", "pipe"], env: cleanGrokEnv(process.env, extraEnv) });
+    } catch (err) {
+      for (const p of cleanupPaths) safeUnlink(p);
+      resolve({ ok: false, text: "", error: `spawn-throw: ${err.code || err.message}` });
+      return;
+    }
+    proc.stdout.setEncoding("utf8");
+    proc.stderr.setEncoding("utf8");
+    let out = "", errBuf = "", outBytes = 0, timedOut = false;
+    proc.stdout.on("data", d => {
+      const n = Buffer.byteLength(d, "utf8");
+      if (outBytes + n > MAX_REVIEWER_BUF) {
+        const rem = MAX_REVIEWER_BUF - outBytes;
+        if (rem > 0) out += d.slice(0, rem);
+        outBytes = MAX_REVIEWER_BUF;
+        try { proc.kill("SIGKILL"); } catch {}
+        return;
+      }
+      out += d; outBytes += n;
+    });
+    proc.stderr.on("data", d => { if (errBuf.length < 256 * 1024) errBuf += d.slice(0, 256 * 1024 - errBuf.length); });
+    proc.stdout.on("error", () => {});
+    proc.stderr.on("error", () => {});
+    proc.on("error", err => { errBuf += `\nproc-error: ${err.code || err.message}`; });
+    let timer = null;
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => { timedOut = true; try { proc.kill("SIGKILL"); } catch {} }, Math.min(timeoutMs, MAX_SETTIMEOUT_MS));
+    }
+    proc.on("close", code => {
+      if (timer) clearTimeout(timer);
+      for (const p of cleanupPaths) safeUnlink(p);
+      if (timedOut) { resolve({ ok: false, text: "", error: `timed out after ${timeoutMs}ms` }); return; }
+      const parsed = parseGrokJson(out);
+      if (parsed.kind === "text" && parsed.text && parsed.text.trim()) { resolve({ ok: true, text: parsed.text }); return; }
+      if (parsed.kind === "error") { resolve({ ok: false, text: "", error: classifyAuthBlob(parsed.message) || parsed.message || "grok error" }); return; }
+      const why = classifyAuthBlob(errBuf);
+      resolve({ ok: false, text: "", error: why || (errBuf.trim() ? errBuf.trim().slice(0, 300) : `no output (exit ${code})`) });
+    });
+  });
+}
+
+async function cmdFanOut({ flags, positional }) {
   const task = positional.join(" ").trim();
   if (!task) {
     console.error("Usage: fan-out <task>   [--personas a,b,c | --agents-json '<json>'] [--write] [--no-web-fetch]");
@@ -1787,33 +1832,26 @@ function cmdFanOut({ flags, positional }) {
     process.exit(2);
   }
 
-  // Decide the analysis angles: explicit custom --agents-json (names only), else
-  // built-in personas.
-  let agentNames = null;   // custom angle names
-  let personas = null;     // built-in persona names
+  // Resolve the analysis angles: custom --agents-json names, else built-in personas.
+  let angles;
   try {
-    if (flags["agents-json"] != null && flags["agents-json"] !== "") {
-      agentNames = validateAgentsJson(flags["agents-json"]).names;
-    } else {
-      personas = validatePersonas(flags.personas);
-    }
+    angles = (flags["agents-json"] != null && flags["agents-json"] !== "")
+      ? validateAgentsJson(flags["agents-json"]).names
+      : validatePersonas(flags.personas);
   } catch (e) {
     console.error(String(e.message || e));
     process.exit(2);
   }
 
-  const fanPrompt = buildFanOutPrompt(task, agentNames ? { agentNames } : { personas });
   const effort = validateEffort(flags.effort);
-  const checkFlag = !!flags.check;
   const disableWebSearch = !!flags["no-web-search"];
   let baseArgs;
   try {
     baseArgs = grokBaseArgs({
-      readOnly: !writeMode,   // single agent: the normal plan-mode read-only strip is fine
+      readOnly: !writeMode,
       model: flags.model,
       jsonOutput: true,
       effort,
-      check: checkFlag,
       disableWebSearch,
       ...extractPolicyFlags(flags)
     });
@@ -1821,13 +1859,43 @@ function cmdFanOut({ flags, positional }) {
     console.error(String(e.message || e));
     process.exit(2);
   }
-  const args = ["-p", fanPrompt, ...baseArgs];
-  if (flags["max-turns"] == null) args.push("--max-turns", String(DEFAULT_FANOUT_MAX_TURNS));
+  const maxTurns = flags["max-turns"] != null ? String(flags["max-turns"]) : String(DEFAULT_FANOUT_MAX_TURNS);
   const extraEnv = webFetchEnvOverride({ noWebFetch: !!flags["no-web-fetch"] || disableWebSearch });
-  runHeadlessGrok({
-    args, timeoutMs, label: "fan-out", extraEnv,
-    timeoutHint: "Re-run with --timeout 0 to disable or a longer --timeout like 1h."
-  });
+
+  // --- Phase 1: one read-only grok call per angle, in parallel. ---
+  process.stderr.write(`[grok-plugin] fan-out: analyzing from ${angles.length} angles in parallel (${angles.join(", ")})...\n`);
+  const angleResults = await Promise.all(angles.map(async angle => {
+    const promptFile = writePromptToTempFile(buildAnglePrompt(angle, task), "grok-fanout-angle");
+    const args = ["--prompt-file", promptFile, ...baseArgs, "--max-turns", maxTurns];
+    const r = await runGrokCapture({ args, timeoutMs, extraEnv, cleanupPaths: [promptFile] });
+    return { angle, ...r };
+  }));
+
+  const okAngles = angleResults.filter(r => r.ok);
+  if (okAngles.length === 0) {
+    process.stderr.write("[grok-plugin] fan-out: every angle failed.\n");
+    for (const r of angleResults) process.stderr.write(`  - ${r.angle}: ${sanitizeForTerminal(r.error || "unknown error")}\n`);
+    const why = angleResults.map(r => classifyAuthBlob(r.error || "")).find(Boolean);
+    if (why) process.stderr.write(`[hint: ${why}. Run /grok:setup.]\n`);
+    process.exit(1);
+  }
+
+  // Emit each angle's full analysis.
+  for (const r of angleResults) {
+    process.stdout.write(`## ${sanitizeForTerminal(r.angle)}\n\n`);
+    process.stdout.write(r.ok ? sanitizeForTerminal(r.text.trim()) + "\n\n" : `_(this angle did not return a result: ${sanitizeForTerminal(r.error || "unknown")})_\n\n`);
+  }
+
+  // --- Phase 2: synthesis call reconciling the angle reports. ---
+  if (okAngles.length >= 2) {
+    process.stderr.write("[grok-plugin] fan-out: synthesizing consolidated verdict...\n");
+    const synthFile = writePromptToTempFile(buildSynthesisPrompt(task, okAngles), "grok-fanout-synth");
+    const synthArgs = ["--prompt-file", synthFile, ...baseArgs, "--max-turns", maxTurns];
+    const synth = await runGrokCapture({ args: synthArgs, timeoutMs, extraEnv, cleanupPaths: [synthFile] });
+    process.stdout.write("## Consolidated verdict\n\n");
+    process.stdout.write(synth.ok ? sanitizeForTerminal(synth.text.trim()) + "\n" : `_(synthesis call did not return a result: ${sanitizeForTerminal(synth.error || "unknown")})_\n`);
+  }
+  process.exit(0);
 }
 
 // ---------- v0.6.0: /grok:models ----------
@@ -2882,7 +2950,7 @@ async function main() {
     case "imagine-video": return await cmdImagine(args, { video: true });
     case "task": return await cmdTask(args);
     case "research": return cmdResearch(args);
-    case "fan-out": return cmdFanOut(args);
+    case "fan-out": return await cmdFanOut(args);
     case "models": return cmdModels(args);
     case "best-of": return cmdBestOf(args);
     case "aggregate-review": return await cmdAggregateReview(args);

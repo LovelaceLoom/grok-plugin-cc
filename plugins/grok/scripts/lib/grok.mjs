@@ -748,33 +748,51 @@ export function validateAgentsJson(input, { maxAgents = MAX_FANOUT_AGENTS } = {}
   return { json, names };
 }
 
-// Build the fan-out prompt: ONE Grok agent analyzes the task from several
-// expert angles in turn, then synthesizes a single consolidated report. We
-// deliberately do NOT ask Grok to spawn parallel `task`-tool subagents:
-// in headless read-only mode a subagent's denied tool call (e.g.
-// run_terminal_command under dontAsk) cancels the whole turn and yields empty
-// output. A single agent sweeping the angles is reliable and still delivers the
-// multi-perspective depth. The angle names double as Grok persona names
-// (reviewer / security-auditor / ...), which steer its framing per section.
-export function buildFanOutPrompt(task, { personas = null, agentNames = null } = {}) {
+// TRUE parallel fan-out (v1.2.0): the PLUGIN orchestrates it — one Grok call
+// per angle, run in parallel, then a synthesis call. This is genuinely "call
+// Grok many times in different directions", reliably, instead of relying on
+// Grok's internal `task`-tool subagent dispatch (which is denied/cancelled in
+// headless read-only mode → empty output).
+//
+// buildAnglePrompt frames ONE angle's focused analysis.
+export function buildAnglePrompt(angle, task) {
+  const a = String(angle == null ? "" : angle).trim();
   const t = String(task == null ? "" : task).trim();
-  const custom = Array.isArray(agentNames) && agentNames.length > 0;
-  const names = custom ? agentNames : (personas || []);
-  const bullets = names.map(n => `  - ${n}`).join("\n");
   return [
-    "Analyze the TASK below from EACH of the following expert angles, treating each as a separate, focused pass.",
-    "Think and report AS that specialist would, and keep the angles independent — don't let one angle's conclusion bias another:",
-    bullets,
-    "",
-    "Then produce ONE consolidated report:",
-    "  1. A section per angle (`## <angle>`) with that specialist's key findings.",
-    "  2. A `## Consolidated verdict` section reconciling agreements and conflicts, with the overall answer.",
-    "",
-    "Be thorough in each angle — this is meant to go deeper than a single quick pass. Proceed autonomously; do not ask",
-    "clarifying questions. State any assumptions you make.",
+    `You are a ${a} specialist. Analyze the TASK below strictly from your ${a} perspective —`,
+    `be thorough and specific, and cover only what a ${a} would care about. Give concrete specialist`,
+    "findings, not a general summary. Proceed autonomously; do not ask clarifying questions. State assumptions.",
     "",
     "TASK:",
     t
+  ].join("\n");
+}
+
+// Cap per-angle text fed into the synthesis prompt so the combined prompt stays
+// bounded (it rides on --prompt-file, but we still don't want a multi-MB blob).
+export const MAX_SYNTHESIS_ANGLE_CHARS = 48 * 1024;
+
+// buildSynthesisPrompt assembles the per-angle reports into a single
+// reconcile-and-conclude request. angleReports: [{ angle, text }].
+export function buildSynthesisPrompt(task, angleReports) {
+  const t = String(task == null ? "" : task).trim();
+  const reports = Array.isArray(angleReports) ? angleReports : [];
+  const blocks = reports.map(r => {
+    let body = String(r && r.text != null ? r.text : "");
+    if (body.length > MAX_SYNTHESIS_ANGLE_CHARS) {
+      body = body.slice(0, MAX_SYNTHESIS_ANGLE_CHARS) + "\n…[truncated for synthesis]";
+    }
+    return `### ${String(r && r.angle != null ? r.angle : "angle")} analysis\n${body}`;
+  }).join("\n\n");
+  return [
+    `You are synthesizing ${reports.length} independent expert analyses of the same task into ONE`,
+    "consolidated verdict. Reconcile agreements and conflicts across them and give the overall answer.",
+    "INTEGRATE the analyses — do not just restate each one. Be complete but not repetitive.",
+    "",
+    `ORIGINAL TASK: ${t}`,
+    "",
+    "ANALYSES:",
+    blocks
   ].join("\n");
 }
 

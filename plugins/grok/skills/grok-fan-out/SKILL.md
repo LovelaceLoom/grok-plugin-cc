@@ -5,7 +5,7 @@ description: Run a multi-angle Grok analysis in a single call — Grok analyzes 
 
 # Grok — Fan-Out (Multi-Angle Analysis)
 
-Use this skill when one angle isn't enough — when the user wants something looked at from **multiple specialties at once** (correctness, security, tests, architecture, research) and a single consolidated verdict. Grok sweeps each angle in one call and synthesizes them, so you get broad coverage and real depth from a single delegation (deeper than a plain `grok-ask`).
+Use this skill when one angle isn't enough — when the user wants something looked at from **multiple specialties at once** (correctness, security, tests, architecture, research) and a single consolidated verdict. The plugin runs one Grok analysis **per angle in parallel**, then a synthesis call that reconciles them — so you get broad coverage and real depth from a single command (deeper than a plain `grok-ask`). It makes several real Grok calls, so it's heavier — prefer it for substantial, multi-faceted tasks.
 
 ## When to use
 

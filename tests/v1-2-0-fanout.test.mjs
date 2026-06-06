@@ -19,7 +19,8 @@ import {
   MAX_FANOUT_AGENTS,
   validatePersonas,
   validateAgentsJson,
-  buildFanOutPrompt,
+  buildAnglePrompt,
+  buildSynthesisPrompt,
   grokBaseArgs
 } from "../plugins/grok/scripts/lib/grok.mjs";
 
@@ -142,26 +143,37 @@ test("grokBaseArgs throws on invalid agents (propagated from validateAgentsJson)
   assert.throws(() => grokBaseArgs({ agents: "[]" }), /empty|at least/i);
 });
 
-// ---------- buildFanOutPrompt (single-agent, multi-angle) ----------
+// ---------- true parallel fan-out: per-angle + synthesis prompts ----------
 //
-// True parallel subagent dispatch in headless read-only mode is unreliable:
-// subagents' tool calls (e.g. run_terminal_command) get denied under read-only
-// permission modes, which cancels the whole turn -> empty output. So fan-out
-// uses ONE Grok agent that analyzes the task from each angle in turn and
-// synthesizes — always returns text, no permission-cancellation cascade.
+// The plugin orchestrates the fan-out itself: one Grok call per angle (in
+// parallel), then a synthesis call that reconciles them. buildAnglePrompt
+// frames a single angle's focused analysis; buildSynthesisPrompt assembles the
+// angle reports into a consolidated-verdict request.
 
-test("buildFanOutPrompt (persona mode) lists every angle, the task, and demands a consolidated synthesis", () => {
-  const p = buildFanOutPrompt("Audit auth.js for bugs", { personas: ["reviewer", "security-auditor"] });
-  assert.match(p, /reviewer/);
+test("buildAnglePrompt frames the task for one specialist angle", () => {
+  const p = buildAnglePrompt("security-auditor", "Review login() for issues");
   assert.match(p, /security-auditor/);
-  assert.match(p, /Audit auth\.js for bugs/);
-  assert.match(p, /angle/i);
-  assert.match(p, /synthesi|consolidat/i);
+  assert.match(p, /Review login\(\) for issues/);
+  // It should NOT ask for a multi-angle synthesis — that's a separate call.
+  assert.equal(/consolidated verdict/i.test(p), false);
 });
 
-test("buildFanOutPrompt (custom-angles mode) references the custom angle names", () => {
-  const p = buildFanOutPrompt("Review the diff", { agentNames: ["alpha", "beta"] });
-  assert.match(p, /alpha/);
-  assert.match(p, /beta/);
-  assert.match(p, /Review the diff/);
+test("buildSynthesisPrompt includes every angle report and asks to reconcile", () => {
+  const p = buildSynthesisPrompt("Review login()", [
+    { angle: "reviewer", text: "naming is bad" },
+    { angle: "security-auditor", text: "plaintext passwords" }
+  ]);
+  assert.match(p, /reviewer/);
+  assert.match(p, /security-auditor/);
+  assert.match(p, /naming is bad/);
+  assert.match(p, /plaintext passwords/);
+  assert.match(p, /Review login\(\)/);
+  assert.match(p, /reconcile|consolidat|synthesi/i);
+});
+
+test("buildSynthesisPrompt truncates an oversized angle report (keeps the synthesis prompt bounded)", () => {
+  const huge = "x".repeat(500000);
+  const p = buildSynthesisPrompt("t", [{ angle: "reviewer", text: huge }]);
+  assert.ok(p.length < 200000, "synthesis prompt must be bounded well under the raw report size");
+  assert.match(p, /truncat/i);
 });
