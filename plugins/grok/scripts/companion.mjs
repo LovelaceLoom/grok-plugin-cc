@@ -31,7 +31,7 @@ import {
   parseGrokJson, writePromptToTempFile, EFFORT_LEVELS, compareVersions, commandUsesJsonOutput,
   effortFlagForModel, grokHomeDir,
   webFetchEnvOverride, validatePersonas, validateAgentsJson, buildFanOutPrompt,
-  DEFAULT_FANOUT_PERSONAS, MAX_FANOUT_AGENTS
+  DEFAULT_FANOUT_PERSONAS, MAX_FANOUT_AGENTS, createStreamingJsonParser
 } from "./lib/grok.mjs";
 import { buildReviewPrompt } from "./lib/prompts.mjs";
 import { renderJobTable, renderJobDetails, fmtTime, TerminalSanitizer, sanitizeForTerminal, formatSessionHint } from "./lib/render.mjs";
@@ -452,6 +452,99 @@ function runHeadlessGrok({ args, timeoutMs, label, timeoutHint = "", extraEnv = 
     diagnoseEmptySpawnFailure({ args, status: r.status, label });
   }
   process.exit(r.status ?? 0);
+}
+
+// v1.2.0: streaming sibling of runHeadlessGrok for `--output-format
+// streaming-json`. Uses spawn (not spawnSync) so the user sees Grok's answer
+// materialize live during a long run instead of waiting for the whole buffer.
+// Same exit/auth/timeout policy as runHeadlessGrok; modeled on runJob's proven
+// detached-spawn + terminateProcessTree timeout handling. Does NOT return —
+// every path ends in process.exit.
+const STREAM_MAX_BYTES = 64 * 1024 * 1024; // memory backstop (no on-disk file here)
+function runStreamingGrok({ args, timeoutMs, label, timeoutHint = "", extraEnv = null }) {
+  const proc = spawn("grok", args, {
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: true,                  // own process group so terminateProcessTree reaps grok's subagents too
+    env: cleanGrokEnv(process.env, extraEnv)
+  });
+  proc.stdout.setEncoding("utf8");
+  proc.stderr.setEncoding("utf8");
+
+  let stderrBuf = "";
+  let totalBytes = 0;
+  let timedOut = false;
+  let overflowed = false;
+  let timeoutTimer = null;
+  if (timeoutMs > 0) {
+    timeoutTimer = setTimeout(() => {
+      if (proc.exitCode !== null || proc.signalCode !== null) return;
+      timedOut = true;
+      terminateProcessTree(proc.pid).catch(() => {});
+    }, Math.min(timeoutMs, MAX_SETTIMEOUT_MS));
+  }
+
+  // Each text delta is sanitized before it touches the terminal — same OSC/ANSI
+  // defense runHeadlessGrok applies to parsed.text. Thoughts are dropped from
+  // stdout to keep stdout == the answer.
+  const parser = createStreamingJsonParser({
+    onText: d => process.stdout.write(sanitizeForTerminal(d))
+  });
+
+  proc.stdout.on("data", d => {
+    totalBytes += Buffer.byteLength(d, "utf8");
+    if (totalBytes > STREAM_MAX_BYTES) {
+      if (!overflowed) {
+        overflowed = true;
+        process.stderr.write(`\n[grok-plugin] ${label} stream exceeded ${STREAM_MAX_BYTES} bytes; terminating to protect memory.\n`);
+        terminateProcessTree(proc.pid).catch(() => {});
+      }
+      return;
+    }
+    parser.push(d);
+  });
+  proc.stderr.on("data", d => {
+    if (stderrBuf.length < 256 * 1024) stderrBuf += d.slice(0, 256 * 1024 - stderrBuf.length);
+  });
+
+  proc.on("error", err => {
+    if (timeoutTimer) clearTimeout(timeoutTimer);
+    process.stderr.write(`\n[grok-plugin] ${label} failed: ${err.code || err.message}\n`);
+    process.exit(1);
+  });
+
+  proc.on("close", code => {
+    if (timeoutTimer) clearTimeout(timeoutTimer);
+    parser.end();
+    const res = parser.result();
+    process.stdout.write("\n"); // terminate the streamed line cleanly
+
+    if (timedOut) {
+      const hintSuffix = timeoutHint ? ` ${timeoutHint}` : "";
+      process.stderr.write(`\n[grok-plugin] ${label} timed out after ${timeoutMs}ms.${hintSuffix}\n`);
+      process.exit(EXIT_TIMEOUT);
+    }
+    if (overflowed) process.exit(1);
+    if (res.kind === "error") {
+      const why = classifyAuthBlob((res.message || "") + "\n" + stderrBuf);
+      process.stderr.write(`Grok error: ${sanitizeForTerminal(res.message || "")}\n`);
+      if (why) process.stderr.write(`[hint: ${why}. Run /grok:setup.]\n`);
+      process.exit(1);
+    }
+    // No text and no terminal `end` event — the stream was empty (broken binary
+    // or an upstream silent-abort). Mirror runHeadlessGrok's diagnostics.
+    if (!res.text && !res.sawEnd) {
+      if (stderrBuf) process.stderr.write(sanitizeForTerminal(stderrBuf) + "\n");
+      const why = classifyAuthBlob(stderrBuf);
+      if (why) process.stderr.write(`[hint: ${why}. Run /grok:setup.]\n`);
+      else diagnoseEmptySpawnFailure({ args, status: code, label });
+      process.exit(code ?? 1);
+    }
+    if (code && code !== 0) {
+      const why = classifyAuthBlob(stderrBuf);
+      if (why) process.stderr.write(`[hint: ${why}. Run /grok:setup.]\n`);
+    }
+    process.exit(code ?? 0);
+  });
 }
 
 // v0.8.0: pluck the user-facing permission/policy flags from a parsed
@@ -1588,12 +1681,16 @@ function cmdResearch({ flags, positional }) {
   // with --compaction-mode / --compaction-detail.
   const compactionMode = flags["compaction-mode"] || "segments";
   const compactionDetail = flags["compaction-detail"];
+  // v1.2.0: --stream emits live NDJSON so the user sees the answer materialize
+  // during a long research run instead of waiting for the whole buffer.
+  const stream = !!flags.stream;
   let baseArgs;
   try {
     baseArgs = grokBaseArgs({
       readOnly: true,
       model: flags.model,
       jsonOutput: true,
+      streamingJson: stream,
       effort,
       check: checkFlag,
       disableWebSearch,
@@ -1610,10 +1707,12 @@ function cmdResearch({ flags, positional }) {
   // v1.2.0: web_fetch grounding ON by default (suppressed by --no-web-fetch,
   // --no-web-search, or a user-set GROK_WEB_FETCH).
   const extraEnv = webFetchEnvOverride({ noWebFetch: !!flags["no-web-fetch"] || disableWebSearch });
-  runHeadlessGrok({
-    args, timeoutMs, label: "research", extraEnv,
-    timeoutHint: "Re-run with --timeout 0 to disable, or pick a longer duration like --timeout 1h."
-  });
+  const timeoutHint = "Re-run with --timeout 0 to disable, or pick a longer duration like --timeout 1h.";
+  if (stream) {
+    runStreamingGrok({ args, timeoutMs, label: "research", extraEnv, timeoutHint });
+  } else {
+    runHeadlessGrok({ args, timeoutMs, label: "research", extraEnv, timeoutHint });
+  }
 }
 
 // ---------- v1.2.0: /grok:fan-out ----------

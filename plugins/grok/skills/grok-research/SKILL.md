@@ -7,8 +7,9 @@ description: Deep research with xAI Grok using effort=max, live web search, and 
 
 Use this skill for non-trivial investigation tasks that benefit from Grok's full reasoning + verification stack. The companion sets sane research defaults:
 
-- `--effort max` — Grok's highest reasoning effort.
+- `--effort max` — requested by default, but **only applied on models that support reasoning effort**. The current default model (`grok-build`) declares none, so the companion strips `--effort` with a stderr warning. The real depth here comes from web search + `--check`, not `--effort`.
 - Web search **enabled** by default — Grok queries the live web during reasoning.
+- Web fetch (`web_fetch`) **enabled** by default (v1.2.0) — Grok can fetch a specific URL the user pasted, not just search. Opt out with `--no-web-fetch`.
 - `--check` **enabled** by default — Grok appends a self-verification loop and revises its own answer.
 
 Override any of these with the flags below if the user explicitly asks for a cheaper / faster / web-less run.
@@ -40,6 +41,8 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/companion.mjs" research "<the user's researc
 - `--effort <low|medium|high|xhigh|max>` — override the default `max`. Use `high` or lower for cheaper runs.
 - `--no-check` — disable the self-verification loop (faster, less rigorous).
 - `--no-web-search` — disable live web search (rare; usually leave on).
+- `--no-web-fetch` — disable the default-on web_fetch tool (rare).
+- `--stream` — stream the answer live as Grok produces it (good for long runs).
 - `--timeout <duration>` — `0` for unbounded (default). `5m`, `30m`, etc.
 
 ## Output rules

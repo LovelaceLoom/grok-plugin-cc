@@ -778,10 +778,11 @@ export function grokBaseArgs({
   resume,                 // string|true|undefined — --resume [<session-id>]: bool or named id
   restoreCode = false,    // --restore-code: checkout the session's original commit on resume
   noMemory = false,       // --no-memory: disable cross-session memory for this call
-  experimentalMemory = false // --experimental-memory: enable cross-session memory for this call
+  experimentalMemory = false, // --experimental-memory: enable cross-session memory for this call
+  streamingJson = false   // v1.2.0: emit --output-format streaming-json (live NDJSON) instead of json
 } = {}) {
   const args = [
-    "--output-format", jsonOutput ? "json" : "plain",
+    "--output-format", streamingJson ? "streaming-json" : (jsonOutput ? "json" : "plain"),
     "-m", effectiveModel(model, cwd)
   ];
   // v0.8.0: --permission-mode is now user-controllable. If the user
@@ -1076,6 +1077,66 @@ export function reconstructStreamingJson(clean) {
   if (events === 0) return null;
   if (errorMsg != null) return { kind: "error", message: errorMsg };
   return { kind: "text", text, sessionId, stopReason };
+}
+
+// v1.2.0: incremental NDJSON parser for live `--output-format streaming-json`.
+// Feed it raw stdout chunks via push(); it buffers partial lines, parses each
+// complete event, fires onText/onThought/onError callbacks for live display,
+// and accumulates a final result() identical in shape to parseGrokJson's. Call
+// end() once the stream closes to flush a trailing newline-less line.
+export function createStreamingJsonParser({ onText, onThought, onError } = {}) {
+  let buf = "";
+  let text = "";
+  let sessionId = null;
+  let stopReason = null;
+  let errorMsg = null;
+  let sawEnd = false;
+
+  function handleLine(line) {
+    const t = line.trim();
+    if (!t) return;
+    let ev = null;
+    try { ev = JSON.parse(t); } catch { return; }      // ignore non-JSON noise
+    if (!ev || typeof ev !== "object" || typeof ev.type !== "string") return;
+    if (ev.type === "text" && typeof ev.data === "string") {
+      text += ev.data;
+      if (onText) onText(ev.data);
+    } else if (ev.type === "thought" && typeof ev.data === "string") {
+      if (onThought) onThought(ev.data);
+    } else if (ev.type === "error") {
+      if (errorMsg == null) errorMsg = ev.message || ev.data || "";
+      if (onError) onError(errorMsg);
+    } else if (ev.type === "end") {
+      sawEnd = true;
+      sessionId = ev.sessionId || null;
+      stopReason = ev.stopReason || null;
+    }
+  }
+
+  return {
+    push(chunk) {
+      buf += chunk;
+      let idx;
+      while ((idx = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, idx);
+        buf = buf.slice(idx + 1);
+        handleLine(line);
+      }
+    },
+    end() {
+      if (buf.length) { handleLine(buf); buf = ""; }
+    },
+    result() {
+      return {
+        kind: errorMsg != null ? "error" : "text",
+        text,
+        message: errorMsg,
+        sessionId,
+        stopReason,
+        sawEnd
+      };
+    }
+  };
 }
 
 export function parseGrokJson(raw) {

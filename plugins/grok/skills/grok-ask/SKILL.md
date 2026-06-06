@@ -30,8 +30,8 @@ The `CLAUDE_PLUGIN_ROOT` env var is set by both Claude Code and Codex CLI. The c
 
 ### Common flags (append to the argument string before the question)
 
-- `--model <name>` — override default Grok model (e.g., `grok-4`, `grok-code-fast-1`).
-- `--effort <low|medium|high|xhigh|max>` — reasoning effort. Most models support this; the companion auto-strips it for models that don't.
+- `--model <name>` — override default Grok model. Available models (run `/grok:models`): `grok-build` (default), `grok-composer-2.5-fast`.
+- `--effort <low|medium|high|xhigh|max>` — reasoning effort. **Note:** the current default model (`grok-build`) declares no reasoning-effort support, so the companion silently strips `--effort` (with a stderr warning) to avoid a 400 from upstream. It only takes effect on a model that advertises `supports_reasoning_effort`.
 - `--timeout <duration>` — e.g., `90s`, `5m`, `0` to disable. Default unbounded.
 - `--no-web-search` — disable Grok's live web search (on by default).
 - `--check` — append Grok's self-verification loop to the answer.

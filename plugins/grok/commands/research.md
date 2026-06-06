@@ -1,6 +1,6 @@
 ---
 description: Deep research with Grok (effort=max, --check self-verification, web search enabled)
-argument-hint: '[--model <model>] [--effort <low|medium|high|xhigh|max>] [--no-check] [--no-web-search] [--timeout <duration>] <question>'
+argument-hint: '[--model <model>] [--stream] [--no-check] [--no-web-search] [--no-web-fetch] [--timeout <duration>] <question>'
 disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---
@@ -9,8 +9,10 @@ Forward the user's research question to Grok in deep-research mode and return th
 
 This command exists to exploit Grok's distinctive strengths:
 - **Live web search** is on by default (pass `--no-web-search` to turn it off).
-- **`--effort max`** is on by default (override with `--effort high` or lower for cheaper runs).
+- **web_fetch** is on by default (v1.2.0) — Grok can fetch a specific URL, not just search (pass `--no-web-fetch` to turn it off).
+- **`--effort max`** is requested by default but only applies on models that support reasoning effort; the current default `grok-build` does not, so it is stripped with a warning. (No action needed — web search + `--check` do the heavy lifting.)
 - **`--check`** is on by default — Grok appends a self-verification loop to its own answer (pass `--no-check` to turn it off).
+- **`--stream`** (v1.2.0) streams the answer live as Grok produces it (uses `--output-format streaming-json`) — useful for long runs where you'd otherwise wait minutes for the buffered result.
 
 Raw user input:
 `$ARGUMENTS`
