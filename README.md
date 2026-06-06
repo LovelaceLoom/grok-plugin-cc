@@ -85,6 +85,7 @@ expose plugin slash commands; instead, the model auto-invokes the matching
 |---|---|---|
 | One-off question | `/grok:ask` | `grok-ask` |
 | Deep research | `/grok:research` | `grok-research` |
+| Multi-angle analysis (fan-out) | `/grok:fan-out` | `grok-fan-out` |
 | Image generation | `/grok:imagine` | `grok-imagine` |
 | Long-form delegated task | `/grok:rescue` | `grok-rescue` |
 | Code review, best-of-N, aggregate-review, sessions, etc. | full table below | invoke via shell (see [`scripts/companion.mjs`](plugins/grok/scripts/companion.mjs) subcommands) |
@@ -97,7 +98,8 @@ expose plugin slash commands; instead, the model auto-invokes the matching
 | `/grok:ask <question>` | Ask Grok a one-off question (read-only). |
 | `/grok:review` | Review uncommitted changes (working-tree, staged, or branch diff). Foreground or background. |
 | `/grok:adversarial-review` | Like `/grok:review`, but the prompt tells Grok to challenge the design and surface failure modes. |
-| `/grok:research <question>` | Deep research with Grok — `--effort max` + `--check` self-verification loop + live web search enabled by default. |
+| `/grok:research <question>` | Deep research with Grok — `--check` self-verification loop + live web search **and** web_fetch enabled by default. Add `--stream` for a live answer. |
+| `/grok:fan-out <task>` | One Grok call that dispatches several subagents in parallel (default: researcher, reviewer, security-auditor, test-writer), each analyzing the task from a different angle, then synthesizes one consolidated answer. Read-only by default; `--write` is gated. Pick angles with `--personas`, or custom subagents with `--agents-json`. |
 | `/grok:models [--set-default <id>]` | List Grok models via `grok models`; optionally pin the workspace default. |
 | `/grok:best-of <N> <prompt>` | Run a prompt N ways in parallel (`grok --best-of-n N`, capped at 8) and return Grok's best answer. |
 | `/grok:aggregate-review [focus]` | Run the same diff-review against codex + gemini + grok in parallel; aggregate verdicts into a unified report. Needs ≥2 CLIs installed. |

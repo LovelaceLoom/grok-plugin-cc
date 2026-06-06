@@ -5,6 +5,59 @@ All notable changes to **grok-plugin-cc** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-06-06
+
+**Tracks the xAI Grok CLI 0.2.22 surface, fixes a silent API-key auth break, and
+adds a fan-out primitive plus grounding/context levers so Claude can pull more
+power out of Grok per call.**
+
+### Added
+
+- **`/grok:fan-out` + the `grok-fan-out` skill — multi-angle analysis in one
+  call.** Grok dispatches several subagents in parallel (default personas:
+  `researcher`, `reviewer`, `security-auditor`, `test-writer`) via its `task`
+  tool, then synthesizes one consolidated report. Read-only by default;
+  `--write` is gated by `GROK_PLUGIN_ALLOW_WRITE=1`. Pick angles with
+  `--personas a,b,c`, or supply custom inline subagents with
+  `--agents-json '<json>'` (validated: count cap, name sanity, recursive
+  control-byte scrub, ARG_MAX size cap; the field schema is validated by Grok).
+- **`--agents <json>` passthrough** in `grokBaseArgs` (`validateAgentsJson`).
+- **web_fetch grounding ON by default** for `/grok:research`, `/grok:ask`, and
+  `/grok:fan-out` (`GROK_WEB_FETCH=1`) — Grok can fetch a pasted URL, not just
+  search. Opt out with `--no-web-fetch`; a user-set `GROK_WEB_FETCH` or
+  `--no-web-search` is respected. `cleanGrokEnv(parent, overrides)` applies
+  allowlisted-only overrides.
+- **`/grok:research --stream`** — live answer via `--output-format
+  streaming-json` (`createStreamingJsonParser` + `runStreamingGrok`).
+- **Context compaction passthrough** — `--compaction-mode` / `--compaction-detail`
+  in `grokBaseArgs`; `/grok:research` defaults to `--compaction-mode segments`.
+
+### Fixed
+
+- **`XAI_API_KEY` was silently filtered by the env allowlist** (it is 0.2.22's
+  documented API-key variable), so API-key / CI auth fell back to interactive
+  OAuth and failed under `-p`. Added to the allowlist; `GROK_CODE_XAI_API_KEY`
+  kept as a fallback. `detectAuthSource` / `classifyAuthBlob` and the setup /
+  skill hints now recognise it.
+- **`GROK_TELEMETRY_ENABLED`** replaces the non-existent `GROK_DISABLE_TELEMETRY`
+  in the allowlist.
+- **`authProbe`** parses via the hardened `parseGrokJson` (not a bare
+  `JSON.parse`), so a stray Rust tracing line around the envelope no longer
+  reports an authenticated account as "probe failed".
+- **`parseGrokJson`** reconstructs `streaming-json` (NDJSON) instead of
+  degrading to `unknown`.
+- **Docs:** `grok-ask` advertised non-existent model ids (`grok-4`,
+  `grok-code-fast-1`); corrected to the real catalog (`grok-build`,
+  `grok-composer-2.5-fast`). `--effort` hints now state that `grok-build`
+  declares no reasoning-effort support, so it is stripped with a warning.
+
+### Changed
+
+- `capabilityProbe`'s required-flag list is now the exported
+  `CAPABILITY_REQUIRED_FLAGS`, and includes `--agents` and `--prompt-json`.
+- New flags in `lib/args.mjs`: `no-web-fetch`, `stream`, `personas`,
+  `agents-json`, `compaction-mode`, `compaction-detail`.
+
 ## [1.1.0] - 2026-05-18
 
 **Codex CLI support — the plugin now installs in both Claude Code and OpenAI's
