@@ -23,7 +23,9 @@ jobs:
 
           ensure_release() {
             local tag="$1" target="$2" title="$3" resolved=""
-            resolved="$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq .sha 2>/dev/null || true)"
+          if ! resolved="$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq .sha 2>/dev/null)"; then
+            resolved=""
+          fi
             if [[ -n "$resolved" && "$resolved" != "$target" ]]; then
               echo "::error::$tag resolves to $resolved; expected $target"
               exit 1
