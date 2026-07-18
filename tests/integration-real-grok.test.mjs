@@ -20,11 +20,11 @@
 //
 // Required setup:
 //   - `grok` on PATH
-//   - Authenticated (run `grok login` or set GROK_CODE_XAI_API_KEY)
+//   - Authenticated (run `grok login` or set XAI_API_KEY)
 //   - GROK_INTEGRATION_TEST=1 in env
 //
 // CI pattern (e.g., a nightly workflow):
-//   GROK_INTEGRATION_TEST=1 GROK_CODE_XAI_API_KEY=$SECRET npm test
+//   GROK_INTEGRATION_TEST=1 XAI_API_KEY=$SECRET npm test
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

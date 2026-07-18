@@ -2,8 +2,8 @@
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](package.json)
-[![Release](https://img.shields.io/github/v/release/taibaran/grok-plugin-cc)](https://github.com/taibaran/grok-plugin-cc/releases)
-[![Tests](https://img.shields.io/badge/tests-405-brightgreen)](tests/)
+[![Release](https://img.shields.io/github/v/release/LovelaceLoom/grok-plugin-cc)](https://github.com/LovelaceLoom/grok-plugin-cc/releases)
+[![CI](https://github.com/LovelaceLoom/grok-plugin-cc/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/LovelaceLoom/grok-plugin-cc/actions/workflows/ci.yml)
 
 Run xAI's [Grok](https://x.ai/news/grok-build-cli) from inside
 **Claude Code** *or* **OpenAI's Codex CLI** (`v1.1.0+`). Get a
@@ -34,13 +34,13 @@ Install the Grok CLI first (Node 20+ required):
 
 ```bash
 curl -fsSL https://x.ai/cli/install.sh | bash
-grok login   # browser OAuth — or set GROK_CODE_XAI_API_KEY (from https://console.x.ai)
+grok login   # browser OAuth — or set XAI_API_KEY (from https://console.x.ai)
 ```
 
 ### Install in Claude Code
 
 ```
-/plugin marketplace add https://github.com/taibaran/grok-plugin-cc
+/plugin marketplace add https://github.com/LovelaceLoom/grok-plugin-cc
 /plugin install grok@grok-plugin-cc
 /grok:setup
 ```
@@ -48,7 +48,7 @@ grok login   # browser OAuth — or set GROK_CODE_XAI_API_KEY (from https://cons
 ### Install in Codex CLI
 
 ```bash
-codex plugin marketplace add taibaran/grok-plugin-cc
+codex plugin marketplace add LovelaceLoom/grok-plugin-cc
 ```
 
 (or, for a local checkout: `codex plugin marketplace add /path/to/grok-plugin-cc`)
@@ -201,7 +201,7 @@ intent.
 ## Try it locally before installing
 
 ```
-git clone https://github.com/taibaran/grok-plugin-cc.git
+git clone https://github.com/LovelaceLoom/grok-plugin-cc.git
 claude --plugin-dir ./grok-plugin-cc/plugins/grok
 ```
 
@@ -215,8 +215,9 @@ contains `.claude-plugin/plugin.json`, not the repo root.
 - Grok CLI: `curl -fsSL https://x.ai/cli/install.sh | bash`
 - Authentication, choose one:
   - Run `!grok login` and complete the browser OAuth flow
-  - Set `GROK_CODE_XAI_API_KEY` (from https://console.x.ai) — either inline
-    or in `~/.claude/settings.json` under `env`
+  - Set `XAI_API_KEY` (from https://console.x.ai) — either inline or in
+    `~/.claude/settings.json` under `env`. The legacy
+    `GROK_CODE_XAI_API_KEY` remains supported as a fallback.
   - Or configure OIDC (`GROK_OIDC_ISSUER` + `GROK_OIDC_CLIENT_ID`) or an
     external auth provider (`GROK_AUTH_PROVIDER_COMMAND`)
 - A SuperGrok Heavy subscription (per xAI's announcement for early beta)
@@ -316,7 +317,7 @@ only old ones.
 The spawned `grok` process receives an **allowlisted** subset of the
 parent environment, not the full env. The allowlist covers `PATH`, `HOME`,
 locale, terminal, temp/XDG dirs, the documented Grok env vars
-(`GROK_CODE_XAI_API_KEY`, `GROK_CLI_CHAT_PROXY_BASE_URL`, `GROK_OIDC_*`,
+(`XAI_API_KEY`, legacy `GROK_CODE_XAI_API_KEY`, `GROK_CLI_CHAT_PROXY_BASE_URL`, `GROK_OIDC_*`,
 `GROK_AUTH_PROVIDER_*`, `GROK_HOME`, etc.), proxy settings, and
 `NODE_EXTRA_CA_CERTS`. Everything else — `ANTHROPIC_API_KEY`,
 `GITHUB_TOKEN`, `OPENAI_API_KEY`, `AWS_*`, `SSH_AUTH_SOCK`, `NODE_OPTIONS`,
@@ -374,15 +375,15 @@ grok-plugin-cc/
 │   │   ├── session-lifecycle-hook.mjs
 │   │   ├── stop-review-gate-hook.mjs
 │   │   └── lib/                      ← state, args, git, process, render, verdict, prompts, grok
-│   └── skills/                       ← grok-cli-runtime, grok-prompting, grok-result-handling
-├── tests/                            ← 339 tests (334 unit + 5 integration), node:test, no devDeps
+│   └── skills/                       ← internal runtime + user-facing Codex/Claude skills
+├── tests/                            ← node:test unit + opt-in integration tests, no devDeps
 ├── .github/workflows/ci.yml          ← CI matrix Node 20/22 + smoke job
 └── package.json  README.md  LICENSE  CHANGELOG.md
 ```
 
 The two-level layout (marketplace at repo root, plugin in `plugins/grok/`)
 mirrors the convention used by `openai/codex-plugin-cc` and
-`taibaran/gemini-plugin-cc`, and is what Claude Code's marketplace schema
+`LovelaceLoom/gemini-plugin-cc`, and is what Claude Code's marketplace schema
 expects.
 
 All slash commands invoke
@@ -403,7 +404,7 @@ local-dev and installed setups. The companion handles:
 
 ## Stability
 
-This plugin is **stable** as of v1.0.0. The 20 command surfaces
+This plugin is **stable** as of v1.0.0. The documented command surfaces
 listed above will not break in any v1.x release; the plugin tracks
 upstream `grok` flag changes via the capability probe so a new Grok
 release that renames a flag surfaces a clear error from `/grok:setup`
@@ -412,6 +413,11 @@ rather than a confusing runtime failure.
 Internal helpers (the dispatcher, the session-trust logic, ANSI
 sanitizer, TOCTOU helpers) are not part of the public surface and
 may continue to evolve.
+
+## Maintainer
+
+Maintained by [@taibaran](https://github.com/taibaran) in the
+[LovelaceLoom](https://github.com/LovelaceLoom) organization.
 
 ## License
 

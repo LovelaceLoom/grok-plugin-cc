@@ -1,7 +1,7 @@
 {
   "name": "grok",
-  "version": "1.2.1",
-  "description": "Use xAI Grok from Claude Code to ask, research (effort=max + web search), review code, generate images/videos via Grok Imagine, run parallel best-of-N branches, or delegate long-form tasks. Wraps the local `grok` CLI.",
+  "version": "1.2.2",
+  "description": "Use xAI Grok from Claude Code to ask, research (effort=max + web search), review code, generate images/videos via Grok Imagine, run parallel best-of-N and fan-out, or delegate long-form tasks. Wraps the local `grok` CLI.",
   "author": {
     "name": "taibaran"
   }

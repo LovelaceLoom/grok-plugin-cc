@@ -12,7 +12,7 @@
 //   1. `.agents/plugins/marketplace.json` at repo root — Codex's
 //      marketplace schema (different from CC's
 //      `.claude-plugin/marketplace.json`). Required for
-//      `codex plugin marketplace add taibaran/grok-plugin-cc`.
+//      `codex plugin marketplace add LovelaceLoom/grok-plugin-cc`.
 //
 //   2. `plugins/grok/.codex-plugin/plugin.json` — Codex-native plugin
 //      manifest with an `interface` block (displayName, category,

@@ -24,7 +24,7 @@ in the codebase:
 
 `cleanGrokEnv()` returns an allowlisted subset of `process.env` to the
 spawned `grok`. The list covers `PATH`, `HOME`, locale, terminal, temp/XDG
-dirs, the documented `GROK_*` env vars, proxy settings, and
+dirs, `XAI_API_KEY`, the documented `GROK_*` env vars, proxy settings, and
 `NODE_EXTRA_CA_CERTS`. Everything else is dropped — including
 `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, `OPENAI_API_KEY`, `AWS_*`,
 `SSH_AUTH_SOCK`, and `NODE_OPTIONS` (the last one is particularly important

@@ -1,12 +1,12 @@
 {
   "name": "grok",
-  "version": "1.2.1",
-  "description": "Use xAI Grok from Codex CLI (and Claude Code) to ask, research (effort=max + web search + --check self-verification), review code, generate images/videos via Grok Imagine, run parallel best-of-N branches, or delegate long-form tasks. Wraps the local `grok` CLI.",
+  "version": "1.2.2",
+  "description": "Use xAI Grok from Codex CLI (and Claude Code) to ask, research (effort=max + web search + --check self-verification), review code, generate images/videos via Grok Imagine, run parallel best-of-N and fan-out, or delegate long-form tasks. Wraps the local `grok` CLI.",
   "author": {
     "name": "taibaran"
   },
-  "homepage": "https://github.com/taibaran/grok-plugin-cc",
-  "repository": "https://github.com/taibaran/grok-plugin-cc",
+  "homepage": "https://github.com/LovelaceLoom/grok-plugin-cc",
+  "repository": "https://github.com/LovelaceLoom/grok-plugin-cc",
   "license": "Apache-2.0",
   "keywords": [
     "grok",
@@ -20,14 +20,14 @@
   "interface": {
     "displayName": "Grok",
     "shortDescription": "Ask Grok, deep-research with web search, code review, image generation, and long-form rescue.",
-    "longDescription": "Wraps the local xAI Grok CLI so Codex (and Claude Code) can call Grok for: one-off questions, deep research with live web search + self-verification, code review and adversarial review, image and video generation via Grok Imagine, parallel best-of-N branches, and long-form delegated tasks. Bring-your-own xAI auth (browser OAuth via `grok login` or `GROK_CODE_XAI_API_KEY`).",
+    "longDescription": "Wraps the local xAI Grok CLI so Codex (and Claude Code) can call Grok for: one-off questions, deep research with live web search + self-verification, code review and adversarial review, image and video generation via Grok Imagine, parallel best-of-N and fan-out, and long-form delegated tasks. Bring-your-own xAI auth (browser OAuth via `grok login` or `XAI_API_KEY`; the legacy `GROK_CODE_XAI_API_KEY` remains supported).",
     "developerName": "taibaran",
     "category": "Engineering",
     "capabilities": [
       "Interactive",
       "Write"
     ],
-    "websiteURL": "https://github.com/taibaran/grok-plugin-cc",
+    "websiteURL": "https://github.com/LovelaceLoom/grok-plugin-cc",
     "defaultPrompt": [
       "Ask Grok a question, run deep research with web search, generate an image, or delegate a long-form task"
     ]

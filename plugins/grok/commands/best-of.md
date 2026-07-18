@@ -20,7 +20,7 @@ Wraps Grok's native `--best-of-n N` flag. Grok spawns N parallel sub-agents in i
 - **General question / quick answer** → use `/grok:ask`
 - **Multi-LLM consensus / code review** → use `/grok:aggregate-review`
 
-For text-only prompts, `--best-of-n` returns an evaluation table of worktree-diff candidates (often empty diffs, so essentially empty stdout). The reporter of [issue #8](https://github.com/taibaran/grok-plugin-cc/issues/8) hit this: a research prompt with `--best-of-n=3` returned 1 byte (just a newline) while the same prompt without `--best-of-n` returned 8.5KB of structured output.
+For text-only prompts, `--best-of-n` returns an evaluation table of worktree-diff candidates (often empty diffs, so essentially empty stdout). The reporter of [issue #8](https://github.com/LovelaceLoom/grok-plugin-cc/issues/8) hit this: a research prompt with `--best-of-n=3` returned 1 byte (just a newline) while the same prompt without `--best-of-n` returned 8.5KB of structured output.
 
 ## Cost
 
