@@ -5,6 +5,16 @@ All notable changes to **grok-plugin-cc** are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] - 2026-07-18
+
+### Maintenance
+
+- Replaced the abbreviated license notice with the canonical Apache-2.0
+  license, added maintainer attribution, and synchronized repository URLs,
+  installation examples, authentication guidance, CI badges, and marketplace
+  metadata after the move to the `LovelaceLoom` organization.
+- Updated GitHub Actions to the current Node 24-based action majors.
+
 ## [1.2.1] - 2026-06-06
 
 ### Changed
@@ -112,14 +122,14 @@ Codex. v1.1.0 ships the manifest and skill metadata that make the plugin
 - **`.agents/plugins/marketplace.json`** — Codex marketplace manifest at the
   repo root. Users install with:
   ```
-  codex plugin marketplace add taibaran/grok-plugin-cc
+  codex plugin marketplace add LovelaceLoom/grok-plugin-cc
   ```
   or for a local checkout:
   ```
   codex plugin marketplace add /path/to/grok-plugin-cc
   ```
   The existing `.claude-plugin/marketplace.json` continues to serve CC
-  installs via `/plugin marketplace add taibaran/grok-plugin-cc`.
+  installs via `/plugin marketplace add https://github.com/LovelaceLoom/grok-plugin-cc`.
 - **Four user-facing skills** under `plugins/grok/skills/`, each with a model-
   oriented `description:` that lets Codex's (and CC's) router auto-invoke
   them at the right time. All four shell out to the same `companion.mjs`:
@@ -1510,7 +1520,7 @@ same bug in the v0.8.5 workaround itself.
 
 ## [0.8.5] - 2026-05-15
 
-Self-healing workaround for [gemini-plugin-cc#4](https://github.com/taibaran/gemini-plugin-cc/issues/4).
+Self-healing workaround for [gemini-plugin-cc#4](https://github.com/LovelaceLoom/gemini-plugin-cc/issues/4).
 
 ### Background
 
@@ -1922,7 +1932,7 @@ the fallback when a peer plugin isn't installed.
 `codex:codex-rescue` and `gemini:gemini-rescue` return acknowledgement
 stubs instead of actual results (upstream bug — see
 [openai/codex-plugin-cc#324](https://github.com/openai/codex-plugin-cc/issues/324)
-and [taibaran/gemini-plugin-cc#3](https://github.com/taibaran/gemini-plugin-cc/issues/3)).
+and [LovelaceLoom/gemini-plugin-cc#3](https://github.com/LovelaceLoom/gemini-plugin-cc/issues/3)).
 Until those land, calling each peer plugin's `companion.mjs review --wait`
 directly is the best available route through the peer plugin layer.
 
@@ -2352,7 +2362,7 @@ priority improvements. All eight are addressed in this release.
 
 Initial release. Wraps the xAI Grok CLI (`grok` binary, headless `-p`)
 for use from inside Claude Code, following the structure used by
-`openai/codex-plugin-cc` and `taibaran/gemini-plugin-cc`.
+`openai/codex-plugin-cc` and `LovelaceLoom/gemini-plugin-cc`.
 
 ### Added
 
@@ -2421,4 +2431,4 @@ for use from inside Claude Code, following the structure used by
   of `gemini-plugin-cc` and `codex-plugin-cc`; a true turn-attribution
   scheme would require a complementary pre-turn snapshot hook.
 
-[0.1.0]: https://github.com/taibaran/grok-plugin-cc/releases/tag/v0.1.0
+[0.1.0]: https://github.com/LovelaceLoom/grok-plugin-cc/releases/tag/v0.1.0

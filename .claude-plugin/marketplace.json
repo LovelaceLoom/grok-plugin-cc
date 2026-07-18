@@ -1,23 +1,23 @@
 {
   "name": "grok-plugin-cc",
   "owner": {
-    "name": "taibaran"
+    "name": "LovelaceLoom"
   },
   "metadata": {
     "description": "Single-plugin marketplace publishing the grok-plugin-cc Claude Code plugin.",
-    "version": "1.2.1"
+    "version": "1.2.2"
   },
   "plugins": [
     {
       "name": "grok",
       "source": "./plugins/grok",
-      "description": "Use xAI's Grok from Claude Code: ask, research (effort=max + live web search + --check self-verification), review, adversarial-review, imagine, imagine-video, parallel best-of-N branches, model picker, and long-form rescue via subagent. Wraps the local `grok` CLI (xAI Grok Build) with env scrubbing, ANSI sanitization, capability probing, TOCTOU/symlink defenses, prompt-injection defenses, and an optional stop-time review gate.",
-      "version": "1.2.1",
+      "description": "Use xAI's Grok from Claude Code: ask, research (effort=max + live web search + --check self-verification), review, adversarial-review, imagine, imagine-video, parallel best-of-N and fan-out, model picker, and long-form rescue via subagent. Wraps the local `grok` CLI (xAI Grok Build) with env scrubbing, ANSI sanitization, capability probing, TOCTOU/symlink defenses, prompt-injection defenses, and an optional stop-time review gate.",
+      "version": "1.2.2",
       "author": { "name": "taibaran" },
       "category": "ai-assistance",
       "tags": ["grok", "xai", "code-review", "research", "rescue-agent"],
       "license": "Apache-2.0",
-      "homepage": "https://github.com/taibaran/grok-plugin-cc"
+      "homepage": "https://github.com/LovelaceLoom/grok-plugin-cc"
     }
   ]
 }

@@ -12,14 +12,15 @@ function readJson(rel) {
   return JSON.parse(fs.readFileSync(path.join(REPO_ROOT, rel), "utf8"));
 }
 
-test("package.json + both plugin manifests are bumped to 1.2.1", () => {
-  assert.equal(readJson("package.json").version, "1.2.1");
-  assert.equal(readJson("plugins/grok/.claude-plugin/plugin.json").version, "1.2.1");
-  assert.equal(readJson("plugins/grok/.codex-plugin/plugin.json").version, "1.2.1");
+test("package.json + both plugin manifests are bumped to 1.2.2", () => {
+  assert.equal(readJson("package.json").version, "1.2.2");
+  assert.equal(readJson("plugins/grok/.claude-plugin/plugin.json").version, "1.2.2");
+  assert.equal(readJson("plugins/grok/.codex-plugin/plugin.json").version, "1.2.2");
 });
 
-test("CHANGELOG documents v1.2.1 (parallel fan-out) and the v1.2.0 XAI_API_KEY fix", () => {
+test("CHANGELOG documents v1.2.2 hardening, v1.2.1 fan-out, and the v1.2.0 auth fix", () => {
   const changelog = fs.readFileSync(path.join(REPO_ROOT, "CHANGELOG.md"), "utf8");
+  assert.match(changelog, /## \[1\.2\.2\]/, "CHANGELOG must have a [1.2.2] section");
   assert.match(changelog, /## \[1\.2\.1\]/, "CHANGELOG must have a [1.2.1] section");
   assert.match(changelog, /## \[1\.2\.0\]/, "CHANGELOG must keep the [1.2.0] section");
   assert.match(changelog, /parallel/i, "CHANGELOG 1.2.1 must mention the parallel fan-out");
